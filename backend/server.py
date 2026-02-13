@@ -18,9 +18,6 @@ load_dotenv()
 # Initialize Groq client
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-# Redmine DB Cache Toggle (Global State)
-REDMINE_DB_ENABLED = False
-
 # Tool Categories for JSPLIT Architecture
 TOOL_CATEGORIES = {
     "music": {
@@ -35,14 +32,18 @@ TOOL_CATEGORIES = {
                  "scrape_products", "search_duckduckgo", "search_products_smart"]
     },
     "redmine": {
-        "description": "Manage Redmine projects, issues, and tasks",
-        "keywords": ["redmine", "issue", "project", "task", "ticket", "bug", "feature", "sprint", "story", "stories", 
-                    "backlog", "velocity", "burndown", "team", "workload", "release", "committed", "completed", "cache", "db",
-                    "analytics", "metrics", "cycle", "lead", "throughput", "trend"],
-        "tools": ["redmine_list_projects", "redmine_list_issues", "redmine_get_issue", 
-                 "redmine_create_issue", "redmine_update_issue", "redmine_db_control",
-                 "redmine_sprint_status", "redmine_backlog_analytics", "redmine_team_workload",
-                 "redmine_cycle_time", "redmine_bug_analytics", "redmine_release_status",
+        "description": "Manage Redmine projects, issues, sprints, team workload, and analytics",
+        "keywords": ["redmine", "issue", "project", "task", "ticket", "bug", "feature", "sprint", "story", "stories",
+                    "backlog", "velocity", "burndown", "team", "workload", "release", "committed", "completed",
+                    "analytics", "metrics", "cycle", "lead", "throughput", "trend", "version", "tracker",
+                    "priority", "assigned", "member", "quality", "defect", "reopened", "spillover",
+                    "blocked", "overloaded", "unestimated", "aging", "resolution"],
+        "tools": ["redmine_list_projects", "redmine_list_versions", "redmine_list_trackers",
+                 "redmine_list_statuses", "redmine_list_users",
+                 "redmine_list_issues", "redmine_get_issue",
+                 "redmine_create_issue", "redmine_update_issue", "redmine_delete_issue",
+                 "redmine_sprint_analytics", "redmine_backlog_analytics", "redmine_team_workload",
+                 "redmine_quality_metrics", "redmine_cycle_time", "redmine_release_status",
                  "redmine_velocity_trend", "redmine_throughput"]
     }
 }
@@ -179,27 +180,69 @@ MCP_TOOLS = [
         "type": "function",
         "function": {
             "name": "redmine_list_projects",
-            "description": "List Redmine projects.",
+            "description": "List all Redmine projects.",
             "parameters": {"type": "object", "properties": {}}
         }
     },
     {
         "type": "function",
         "function": {
-            "name": "redmine_list_issues",
-            "description": "List Redmine issues (basic list only). For counts/metrics/analytics use analytics tools instead.",
+            "name": "redmine_list_versions",
+            "description": "List versions/sprints for a project. Use to find version IDs for sprint analytics.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "status": {
-                        "type": "string", 
-                        "enum": ["open", "closed", "all"],
-                        "description": "Filter by status (default: open)"
-                    },
-                    "limit": {
-                        "type": "integer", 
-                        "description": "Max issues to return (default: 25)"
-                    }
+                    "project_id": {"type": "string", "description": "Project ID or identifier"}
+                },
+                "required": ["project_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "redmine_list_trackers",
+            "description": "List available trackers (Bug, Feature, Story, etc.)",
+            "parameters": {"type": "object", "properties": {}}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "redmine_list_statuses",
+            "description": "List available issue statuses (New, In Progress, Closed, etc.)",
+            "parameters": {"type": "object", "properties": {}}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "redmine_list_users",
+            "description": "List users/members. If project_id given, lists project members.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string", "description": "Project ID or identifier (optional)"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "redmine_list_issues",
+            "description": "List Redmine issues with rich filtering (tracker, version, assignee, priority). Returns tracker, version, estimated_hours, done_ratio, dates.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string", "description": "Project ID or identifier (optional)"},
+                    "status": {"type": "string", "enum": ["open", "closed", "all"], "description": "Filter by status (default: open)"},
+                    "tracker_id": {"type": "integer", "description": "Filter by tracker ID (optional)"},
+                    "assigned_to_id": {"type": "integer", "description": "Filter by assignee user ID (optional)"},
+                    "fixed_version_id": {"type": "integer", "description": "Filter by version/sprint ID (optional)"},
+                    "priority_id": {"type": "integer", "description": "Filter by priority (1=Low,2=Normal,3=High,4=Urgent,5=Immediate)"},
+                    "limit": {"type": "integer", "description": "Max issues (-1 for ALL, default: 25)"},
+                    "sort": {"type": "string", "description": "Sort order (default: updated_on:desc)"}
                 }
             }
         }
@@ -208,7 +251,7 @@ MCP_TOOLS = [
         "type": "function",
         "function": {
             "name": "redmine_get_issue",
-            "description": "Get Redmine issue details.",
+            "description": "Get detailed issue info including journals/history, children, relations.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -222,13 +265,21 @@ MCP_TOOLS = [
         "type": "function",
         "function": {
             "name": "redmine_create_issue",
-            "description": "Create Redmine issue.",
+            "description": "Create a new Redmine issue with full field support.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string", "description": "Project ID"},
-                    "subject": {"type": "string", "description": "Title"},
-                    "description": {"type": "string", "description": "Description"}
+                    "project_id": {"type": "string", "description": "Project ID or identifier"},
+                    "subject": {"type": "string", "description": "Issue title"},
+                    "description": {"type": "string", "description": "Description"},
+                    "tracker_id": {"type": "integer", "description": "Tracker ID (default: 1=Bug)"},
+                    "priority_id": {"type": "integer", "description": "Priority (1=Low,2=Normal,3=High, default: 2)"},
+                    "assigned_to_id": {"type": "integer", "description": "Assignee user ID"},
+                    "fixed_version_id": {"type": "integer", "description": "Version/sprint ID"},
+                    "estimated_hours": {"type": "number", "description": "Estimated hours"},
+                    "start_date": {"type": "string", "description": "Start date YYYY-MM-DD"},
+                    "due_date": {"type": "string", "description": "Due date YYYY-MM-DD"},
+                    "parent_issue_id": {"type": "integer", "description": "Parent issue ID"}
                 },
                 "required": ["project_id", "subject"]
             }
@@ -238,11 +289,19 @@ MCP_TOOLS = [
         "type": "function",
         "function": {
             "name": "redmine_update_issue",
-            "description": "Update Redmine issue.",
+            "description": "Update an existing Redmine issue (status, priority, assignee, version, notes, etc.)",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "issue_id": {"type": "integer", "description": "Issue ID"},
+                    "subject": {"type": "string", "description": "New subject"},
+                    "status_id": {"type": "integer", "description": "New status ID"},
+                    "priority_id": {"type": "integer", "description": "New priority ID"},
+                    "tracker_id": {"type": "integer", "description": "New tracker ID"},
+                    "assigned_to_id": {"type": "integer", "description": "New assignee user ID"},
+                    "fixed_version_id": {"type": "integer", "description": "New version/sprint ID"},
+                    "done_ratio": {"type": "integer", "description": "Completion percentage 0-100"},
+                    "estimated_hours": {"type": "number", "description": "Estimated hours"},
                     "notes": {"type": "string", "description": "Comment to add"}
                 },
                 "required": ["issue_id"]
@@ -252,18 +311,14 @@ MCP_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "redmine_db_control",
-            "description": "Control Redmine DB cache (on/off/refresh/status). Cache enables fast analytics.",
+            "name": "redmine_delete_issue",
+            "description": "Delete a Redmine issue permanently.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": ["on", "off", "refresh", "status"],
-                        "description": "Action: 'on' to enable cache, 'off' to disable, 'refresh' to update data, 'status' to check cache info"
-                    }
+                    "issue_id": {"type": "integer", "description": "Issue ID to delete"}
                 },
-                "required": ["action"]
+                "required": ["issue_id"]
             }
         }
     },
@@ -315,17 +370,16 @@ MCP_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "redmine_sprint_status",
-            "description": "Get sprint status analytics (committed, completed, remaining, blocked, progress)",
+            "name": "redmine_sprint_analytics",
+            "description": "Complete sprint analytics: committed, completed, remaining, in-progress, blocked, spillover, burndown status. USE THIS for any sprint/iteration questions.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "version_name": {"type": "string", "description": "Sprint/version name (optional)"},
-                    "project_id": {
-                        "type": ["integer", "string"],
-                        "description": "Project ID or name (e.g., 6 or 'ncel'). Optional."
-                    }
-                }
+                    "project_id": {"type": "string", "description": "Project ID or identifier (required)"},
+                    "version_id": {"type": "integer", "description": "Version/sprint ID (optional - auto-detects current)"},
+                    "version_name": {"type": "string", "description": "Sprint name to search for (optional)"}
+                },
+                "required": ["project_id"]
             }
         }
     },
@@ -333,14 +387,11 @@ MCP_TOOLS = [
         "type": "function",
         "function": {
             "name": "redmine_backlog_analytics",
-            "description": "Get backlog metrics (size, priority, aging, monthly trends)",
+            "description": "Backlog metrics: total size, high-priority open, unestimated %, aging, monthly created/closed.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {
-                        "type": ["integer", "string"],
-                        "description": "Project ID or name (e.g., 6 or 'ncel'). Optional."
-                    }
+                    "project_id": {"type": "string", "description": "Project ID or identifier (optional)"}
                 }
             }
         }
@@ -349,14 +400,24 @@ MCP_TOOLS = [
         "type": "function",
         "function": {
             "name": "redmine_team_workload",
-            "description": "Get team workload distribution and overloaded members",
+            "description": "Team workload: tasks per member, overloaded members, unassigned issues. Full pagination.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {
-                        "type": ["integer", "string"],
-                        "description": "Project ID or name (e.g., 6 or 'ncel'). Optional."
-                    }
+                    "project_id": {"type": "string", "description": "Project ID or identifier (optional)"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "redmine_quality_metrics",
+            "description": "Bug/quality: open bugs, critical bugs, bug-to-story ratio, avg resolution time, recent bugs. USE THIS for bug questions.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string", "description": "Project ID or identifier (optional)"}
                 }
             }
         }
@@ -365,30 +426,12 @@ MCP_TOOLS = [
         "type": "function",
         "function": {
             "name": "redmine_cycle_time",
-            "description": "Get cycle time and lead time metrics",
+            "description": "Cycle time (In Progress->Closed) and lead time (Created->Closed) from journal history. Also counts re-opened tickets.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {
-                        "type": ["integer", "string"],
-                        "description": "Project ID or name (e.g., 6 or 'ncel'). Optional."
-                    }
-                }
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "redmine_bug_analytics",
-            "description": "Get bug counts and metrics. USE THIS for questions about bugs (how many bugs, bug status, bug ratio). Returns total bugs, open bugs, critical bugs. NCEL project = ID 6.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "project_id": {
-                        "type": ["integer", "string"],
-                        "description": "Project ID or name (e.g., 6 or 'ncel' for NCEL project). Optional - omit for all projects."
-                    }
+                    "project_id": {"type": "string", "description": "Project ID or identifier (optional)"},
+                    "sample_size": {"type": "integer", "description": "Number of recent closed issues to analyze (default: 50)"}
                 }
             }
         }
@@ -397,12 +440,15 @@ MCP_TOOLS = [
         "type": "function",
         "function": {
             "name": "redmine_release_status",
-            "description": "Get release progress and completion status",
+            "description": "Release/version completion: features done, scope %, unresolved issues per release.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "version_name": {"type": "string", "description": "Release/version name (optional)"}
-                }
+                    "project_id": {"type": "string", "description": "Project ID or identifier (required)"},
+                    "version_id": {"type": "integer", "description": "Version ID (optional - shows all open if omitted)"},
+                    "version_name": {"type": "string", "description": "Version name to search (optional)"}
+                },
+                "required": ["project_id"]
             }
         }
     },
@@ -410,16 +456,14 @@ MCP_TOOLS = [
         "type": "function",
         "function": {
             "name": "redmine_velocity_trend",
-            "description": "Get velocity trend over last N sprints",
+            "description": "Velocity over last N closed sprints: completed issues & hours per sprint, trend (stable/increasing/decreasing).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {
-                        "type": ["integer", "string"],
-                        "description": "Project ID or name (e.g., 6 or 'ncel'). Optional."
-                    },
+                    "project_id": {"type": "string", "description": "Project ID or identifier (required)"},
                     "sprints": {"type": "integer", "description": "Number of sprints (default: 5)"}
-                }
+                },
+                "required": ["project_id"]
             }
         }
     },
@@ -427,14 +471,11 @@ MCP_TOOLS = [
         "type": "function",
         "function": {
             "name": "redmine_throughput",
-            "description": "Get throughput (created vs closed tickets over time)",
+            "description": "Throughput: created vs closed per week, weekly breakdown, trend (positive/negative).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {
-                        "type": ["integer", "string"],
-                        "description": "Project ID or name (e.g., 6 or 'ncel'). Optional."
-                    },
+                    "project_id": {"type": "string", "description": "Project ID or identifier (optional)"},
                     "weeks": {"type": "integer", "description": "Number of weeks (default: 4)"}
                 }
             }
@@ -988,542 +1029,411 @@ async def call_mcp_tool(tool_name: str, arguments: dict) -> str:
                     "suggestion": "Try using search_google or search_duckduckgo instead."
                 })
     
-    # Redmine tools
-    elif tool_name == "redmine_list_projects":
-        if not os.getenv("REDMINE_URL") or not os.getenv("REDMINE_API_KEY"):
-            return json.dumps({
-                "success": False,
-                "error": "Redmine not configured. Set REDMINE_URL and REDMINE_API_KEY in .env file."
-            })
-        
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    f"{os.getenv('REDMINE_URL')}/projects.json",
-                    headers={"X-Redmine-API-Key": os.getenv("REDMINE_API_KEY")},
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                data = response.json()
-                
-                projects = []
-                for project in data.get("projects", []):
-                    projects.append({
-                        "id": project.get("id"),
-                        "name": project.get("name"),
-                        "identifier": project.get("identifier"),
-                        "description": project.get("description"),
-                        "status": project.get("status")
-                    })
-                
-                return json.dumps({
-                    "success": True,
-                    "count": len(projects),
-                    "projects": projects
-                }, indent=2)
-                
-            except Exception as e:
-                return json.dumps({"success": False, "error": str(e)})
+    # ===== REDMINE TOOLS (All use direct API via redmine agent) =====
     
-    elif tool_name == "redmine_list_issues":
-        if not os.getenv("REDMINE_URL") or not os.getenv("REDMINE_API_KEY"):
-            return json.dumps({
-                "success": False,
-                "error": "Redmine not configured."
-            })
+    elif tool_name.startswith("redmine_"):
+        # Import the MCP agent's redmine module and call tools directly
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "mcp-server"))
+        from agents.redmine import (
+            _api_get, _api_post, _api_put, _api_delete,
+            _fetch_all_issues, _get_total_count, _resolve_project_id,
+            _list_versions, _find_active_version, _issue_summary, _ok, _err,
+        )
         
-        project_id = arguments.get("project_id")
-        status = arguments.get("status", "open")
-        limit = arguments.get("limit", 100)  # Increased from 25 to 100
-        
-        params = {
-            "limit": min(limit, 100),  # Cap at 100 per request
-            "status_id": "open" if status == "open" else ("closed" if status == "closed" else "*")
-        }
-        
-        if project_id:
-            params["project_id"] = project_id
-        
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    f"{os.getenv('REDMINE_URL')}/issues.json",
-                    headers={"X-Redmine-API-Key": os.getenv("REDMINE_API_KEY")},
-                    params=params,
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                data = response.json()
+        try:
+            if tool_name == "redmine_list_projects":
+                all_projects = []
+                offset = 0
+                while True:
+                    data = await _api_get("/projects.json", {"limit": 100, "offset": offset})
+                    for p in data.get("projects", []):
+                        all_projects.append({
+                            "id": p.get("id"), "name": p.get("name"),
+                            "identifier": p.get("identifier"),
+                            "description": (p.get("description") or "")[:200],
+                            "status": p.get("status"),
+                        })
+                    if offset + 100 >= data.get("total_count", 0):
+                        break
+                    offset += 100
+                return _ok({"count": len(all_projects), "projects": all_projects})
+            
+            elif tool_name == "redmine_list_versions":
+                pid = await _resolve_project_id(arguments.get("project_id"))
+                if pid is None:
+                    return _err(f"Could not resolve project: {arguments.get('project_id')}")
+                versions = await _list_versions(pid)
+                result = [{"id": v.get("id"), "name": v.get("name"), "status": v.get("status"), "due_date": v.get("due_date")} for v in versions]
+                return _ok({"project_id": pid, "count": len(result), "versions": result})
+            
+            elif tool_name == "redmine_list_trackers":
+                data = await _api_get("/trackers.json")
+                trackers = [{"id": t["id"], "name": t["name"]} for t in data.get("trackers", [])]
+                return _ok({"trackers": trackers})
+            
+            elif tool_name == "redmine_list_statuses":
+                data = await _api_get("/issue_statuses.json")
+                statuses = [{"id": s["id"], "name": s["name"], "is_closed": s.get("is_closed", False)} for s in data.get("issue_statuses", [])]
+                return _ok({"statuses": statuses})
+            
+            elif tool_name == "redmine_list_users":
+                project_id = arguments.get("project_id")
+                if project_id:
+                    pid = await _resolve_project_id(project_id)
+                    if pid is None:
+                        return _err(f"Could not resolve project: {project_id}")
+                    data = await _api_get(f"/projects/{pid}/memberships.json", {"limit": 100})
+                    members = []
+                    for m in data.get("memberships", []):
+                        user = m.get("user")
+                        if user:
+                            members.append({"id": user.get("id"), "name": user.get("name")})
+                    return _ok({"project_id": pid, "count": len(members), "members": members})
+                else:
+                    data = await _api_get("/users.json", {"limit": 100, "status": 1})
+                    users = [{"id": u["id"], "name": f"{u.get('firstname','')} {u.get('lastname','')}".strip()} for u in data.get("users", [])]
+                    return _ok({"count": len(users), "users": users})
+            
+            elif tool_name == "redmine_list_issues":
+                params = {}
+                status = arguments.get("status", "open")
+                status_map = {"open": "open", "closed": "closed", "all": "*"}
+                params["status_id"] = status_map.get(status, "*")
+                params["sort"] = arguments.get("sort", "updated_on:desc")
                 
-                issues = []
-                for issue in data.get("issues", []):
-                    status_obj = issue.get("status") or {}
-                    priority_obj = issue.get("priority") or {}
-                    assigned_to_obj = issue.get("assigned_to") or {}
-                    author_obj = issue.get("author") or {}
-                    project_obj = issue.get("project") or {}
-                    
-                    issues.append({
-                        "id": issue.get("id"),
-                        "subject": issue.get("subject"),
-                        "description": issue.get("description"),
-                        "status": status_obj.get("name"),
-                        "priority": priority_obj.get("name"),
-                        "assigned_to": assigned_to_obj.get("name"),
-                        "author": author_obj.get("name"),
-                        "project": project_obj.get("name"),
-                        "created_on": issue.get("created_on"),
-                        "updated_on": issue.get("updated_on")
-                    })
+                pid_str = arguments.get("project_id")
+                if pid_str:
+                    pid = await _resolve_project_id(pid_str)
+                    if pid:
+                        params["project_id"] = pid
+                for key in ("tracker_id", "assigned_to_id", "fixed_version_id", "priority_id"):
+                    if arguments.get(key):
+                        params[key] = arguments[key]
                 
-                return json.dumps({
-                    "success": True,
-                    "count": len(issues),
-                    "total_count": data.get("total_count"),
-                    "issues": issues
-                }, indent=2)
-                
-            except Exception as e:
-                return json.dumps({"success": False, "error": str(e)})
-    
-    elif tool_name == "redmine_get_issue":
-        if not os.getenv("REDMINE_URL") or not os.getenv("REDMINE_API_KEY"):
-            return json.dumps({
-                "success": False,
-                "error": "Redmine not configured."
-            })
-        
-        issue_id = arguments.get("issue_id")
-        
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    f"{os.getenv('REDMINE_URL')}/issues/{issue_id}.json",
-                    headers={"X-Redmine-API-Key": os.getenv("REDMINE_API_KEY")},
-                    params={"include": "journals,attachments"},
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                data = response.json()
-                
+                limit = arguments.get("limit", 25)
+                if limit == -1:
+                    issues = await _fetch_all_issues(params)
+                    result_issues = [_issue_summary(i) for i in issues]
+                    return _ok({"count": len(result_issues), "total_count": len(result_issues), "issues": result_issues})
+                else:
+                    params["limit"] = min(limit, 100)
+                    data = await _api_get("/issues.json", params)
+                    result_issues = [_issue_summary(i) for i in data.get("issues", [])]
+                    return _ok({"count": len(result_issues), "total_count": data.get("total_count", 0), "issues": result_issues})
+            
+            elif tool_name == "redmine_get_issue":
+                issue_id = arguments.get("issue_id")
+                data = await _api_get(f"/issues/{issue_id}.json", {"include": "journals,children,relations,watchers,attachments"})
                 issue = data.get("issue", {})
-                
-                return json.dumps({
-                    "success": True,
-                    "issue": {
-                        "id": issue.get("id"),
-                        "subject": issue.get("subject"),
-                        "description": issue.get("description"),
-                        "status": issue.get("status", {}).get("name"),
-                        "priority": issue.get("priority", {}).get("name"),
-                        "tracker": issue.get("tracker", {}).get("name"),
-                        "assigned_to": issue.get("assigned_to", {}).get("name"),
-                        "author": issue.get("author", {}).get("name"),
-                        "project": issue.get("project", {}).get("name"),
-                        "created_on": issue.get("created_on"),
-                        "updated_on": issue.get("updated_on"),
-                        "done_ratio": issue.get("done_ratio"),
-                        "estimated_hours": issue.get("estimated_hours"),
-                        "spent_hours": issue.get("spent_hours")
-                    }
-                }, indent=2)
-                
-            except Exception as e:
-                return json.dumps({"success": False, "error": str(e)})
-    
-    elif tool_name == "redmine_create_issue":
-        if not os.getenv("REDMINE_URL") or not os.getenv("REDMINE_API_KEY"):
-            return json.dumps({
-                "success": False,
-                "error": "Redmine not configured."
-            })
-        
-        project_id = arguments.get("project_id")
-        subject = arguments.get("subject")
-        description = arguments.get("description", "")
-        priority_id = arguments.get("priority_id", 2)
-        tracker_id = arguments.get("tracker_id", 1)
-        assigned_to_id = arguments.get("assigned_to_id")
-        
-        issue_data = {
-            "issue": {
-                "project_id": project_id,
-                "subject": subject,
-                "description": description,
-                "priority_id": priority_id,
-                "tracker_id": tracker_id
-            }
-        }
-        
-        if assigned_to_id:
-            issue_data["issue"]["assigned_to_id"] = assigned_to_id
-        
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    f"{os.getenv('REDMINE_URL')}/issues.json",
-                    headers={
-                        "X-Redmine-API-Key": os.getenv("REDMINE_API_KEY"),
-                        "Content-Type": "application/json"
-                    },
-                    json=issue_data,
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                data = response.json()
-                
+                journals = []
+                for j in issue.get("journals", []):
+                    entry = {"id": j.get("id"), "user": (j.get("user") or {}).get("name"), "created_on": j.get("created_on"), "notes": j.get("notes") or None, "details": []}
+                    for d in j.get("details", []):
+                        entry["details"].append({"property": d.get("property"), "name": d.get("name"), "old_value": d.get("old_value"), "new_value": d.get("new_value")})
+                    if entry["notes"] or entry["details"]:
+                        journals.append(entry)
+                result = {**_issue_summary(issue), "description": issue.get("description"), "children": issue.get("children", []), "relations": issue.get("relations", []), "journals": journals[-10:]}
+                return _ok({"issue": result})
+            
+            elif tool_name == "redmine_create_issue":
+                pid = await _resolve_project_id(arguments.get("project_id"))
+                issue_fields = {
+                    "project_id": pid or arguments.get("project_id"),
+                    "subject": arguments.get("subject"),
+                    "description": arguments.get("description", ""),
+                    "tracker_id": arguments.get("tracker_id", 1),
+                    "priority_id": arguments.get("priority_id", 2),
+                }
+                for key in ("assigned_to_id", "fixed_version_id", "estimated_hours", "start_date", "due_date", "parent_issue_id", "category_id"):
+                    if arguments.get(key) is not None:
+                        issue_fields[key] = arguments[key]
+                data = await _api_post("/issues.json", {"issue": issue_fields})
                 issue = data.get("issue", {})
-                
-                return json.dumps({
-                    "success": True,
-                    "message": f"Issue #{issue.get('id')} created successfully",
-                    "issue": {
-                        "id": issue.get("id"),
-                        "subject": issue.get("subject"),
-                        "project": issue.get("project", {}).get("name"),
-                        "status": issue.get("status", {}).get("name")
-                    }
-                }, indent=2)
-                
-            except Exception as e:
-                return json.dumps({"success": False, "error": str(e)})
-    
-    elif tool_name == "redmine_update_issue":
-        if not os.getenv("REDMINE_URL") or not os.getenv("REDMINE_API_KEY"):
-            return json.dumps({
-                "success": False,
-                "error": "Redmine not configured."
-            })
-        
-        issue_id = arguments.get("issue_id")
-        issue_data = {"issue": {}}
-        
-        if arguments.get("subject"):
-            issue_data["issue"]["subject"] = arguments.get("subject")
-        if arguments.get("description"):
-            issue_data["issue"]["description"] = arguments.get("description")
-        if arguments.get("status_id"):
-            issue_data["issue"]["status_id"] = arguments.get("status_id")
-        if arguments.get("priority_id"):
-            issue_data["issue"]["priority_id"] = arguments.get("priority_id")
-        if arguments.get("assigned_to_id"):
-            issue_data["issue"]["assigned_to_id"] = arguments.get("assigned_to_id")
-        if arguments.get("done_ratio") is not None:
-            issue_data["issue"]["done_ratio"] = arguments.get("done_ratio")
-        if arguments.get("notes"):
-            issue_data["issue"]["notes"] = arguments.get("notes")
-        
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.put(
-                    f"{os.getenv('REDMINE_URL')}/issues/{issue_id}.json",
-                    headers={
-                        "X-Redmine-API-Key": os.getenv("REDMINE_API_KEY"),
-                        "Content-Type": "application/json"
-                    },
-                    json=issue_data,
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                
-                return json.dumps({
-                    "success": True,
-                    "message": f"Issue #{issue_id} updated successfully"
-                }, indent=2)
-                
-            except Exception as e:
-                return json.dumps({"success": False, "error": str(e)})
-    
-    elif tool_name == "redmine_db_control":
-        global REDMINE_DB_ENABLED
-        
-        action = arguments.get("action", "status")
-        
-        if action == "on":
-            if REDMINE_DB_ENABLED:
-                return json.dumps({
-                    "success": True,
-                    "message": "Redmine DB cache is already enabled",
-                    "status": "enabled"
+                return _ok({"message": f"Issue #{issue.get('id')} created successfully", "issue": _issue_summary(issue)})
+            
+            elif tool_name == "redmine_update_issue":
+                issue_id = arguments.get("issue_id")
+                fields = {}
+                for key in ("subject", "description", "status_id", "priority_id", "tracker_id", "assigned_to_id", "fixed_version_id", "done_ratio", "estimated_hours", "start_date", "due_date", "notes"):
+                    if arguments.get(key) is not None:
+                        fields[key] = arguments[key]
+                await _api_put(f"/issues/{issue_id}.json", {"issue": fields})
+                return _ok({"message": f"Issue #{issue_id} updated successfully"})
+            
+            elif tool_name == "redmine_delete_issue":
+                issue_id = arguments.get("issue_id")
+                await _api_delete(f"/issues/{issue_id}.json")
+                return _ok({"message": f"Issue #{issue_id} deleted successfully"})
+            
+            elif tool_name == "redmine_sprint_analytics":
+                from agents.redmine import _find_active_version as _fav
+                from datetime import datetime as dt, timedelta as td
+                pid = await _resolve_project_id(arguments.get("project_id"))
+                if pid is None:
+                    return _err(f"Could not resolve project: {arguments.get('project_id')}")
+                versions = await _list_versions(pid)
+                target = None
+                vid_arg = arguments.get("version_id")
+                vname_arg = arguments.get("version_name")
+                if vid_arg:
+                    target = next((v for v in versions if v["id"] == vid_arg), None)
+                elif vname_arg:
+                    target = next((v for v in versions if vname_arg.lower() in v.get("name", "").lower()), None)
+                else:
+                    target = await _fav(pid)
+                if not target:
+                    return _err("No matching version/sprint found. Use redmine_list_versions to see available versions.")
+                vid = target["id"]
+                issues = await _fetch_all_issues({"project_id": pid, "fixed_version_id": vid, "status_id": "*"})
+                sdata = await _api_get("/issue_statuses.json")
+                closed_ids = {s["id"] for s in sdata.get("issue_statuses", []) if s.get("is_closed")}
+                total = len(issues)
+                completed = sum(1 for i in issues if (i.get("status") or {}).get("id") in closed_ids)
+                in_prog = sum(1 for i in issues if (i.get("status") or {}).get("name", "").lower() in ("in progress", "in_progress"))
+                blocked = sum(1 for i in issues if (i.get("status") or {}).get("name", "").lower() in ("feedback", "blocked"))
+                remaining = total - completed
+                pct = round((completed / total * 100) if total > 0 else 0, 1)
+                est = round(sum(float(i.get("estimated_hours") or 0) for i in issues), 1)
+                spent = round(sum(float(i.get("spent_hours") or 0) for i in issues), 1)
+                by_status = {}
+                for i in issues:
+                    sn = (i.get("status") or {}).get("name", "Unknown")
+                    by_status[sn] = by_status.get(sn, 0) + 1
+                return _ok({
+                    "sprint": {"name": target.get("name"), "version_id": vid, "status": target.get("status"), "due_date": target.get("due_date")},
+                    "metrics": {"total_committed": total, "completed": completed, "remaining": remaining, "in_progress": in_prog, "blocked": blocked, "completion_percentage": pct, "total_estimated_hours": est, "total_spent_hours": spent},
+                    "breakdown_by_status": by_status,
+                    "burndown_assessment": "on_track" if pct >= 60 else ("at_risk" if pct >= 30 else "behind"),
                 })
             
-            # Enable cache and trigger initial refresh
-            REDMINE_DB_ENABLED = True
-            
-            try:
-                from redmine_cache import cache
-                refresh_result = await cache.refresh(force=True)
-                
-                return json.dumps({
-                    "success": True,
-                    "message": "Redmine DB cache enabled and initialized",
-                    "status": "enabled",
-                    "cache_info": refresh_result
-                }, indent=2)
-            except Exception as e:
-                REDMINE_DB_ENABLED = False
-                return json.dumps({
-                    "success": False,
-                    "error": f"Failed to initialize cache: {str(e)}"
-                })
-        
-        elif action == "off":
-            if not REDMINE_DB_ENABLED:
-                return json.dumps({
-                    "success": True,
-                    "message": "Redmine DB cache is already disabled",
-                    "status": "disabled"
-                })
-            
-            REDMINE_DB_ENABLED = False
-            return json.dumps({
-                "success": True,
-                "message": "Redmine DB cache disabled. Analytics will use direct API calls.",
-                "status": "disabled"
-            }, indent=2)
-        
-        elif action == "refresh":
-            if not REDMINE_DB_ENABLED:
-                return json.dumps({
-                    "success": False,
-                    "error": "Cache is disabled. Enable it first with action='on'"
+            elif tool_name == "redmine_backlog_analytics":
+                from datetime import datetime as dt
+                params_ba = {"status_id": "open"}
+                pid = None
+                if arguments.get("project_id"):
+                    pid = await _resolve_project_id(arguments.get("project_id"))
+                    if pid:
+                        params_ba["project_id"] = pid
+                total_open = await _get_total_count(params_ba)
+                high = await _get_total_count({**params_ba, "priority_id": 3})
+                urgent = await _get_total_count({**params_ba, "priority_id": 4})
+                immediate = await _get_total_count({**params_ba, "priority_id": 5})
+                open_issues = await _fetch_all_issues(params_ba, max_issues=2000)
+                unest = sum(1 for i in open_issues if not i.get("estimated_hours"))
+                pct_unest = round((unest / len(open_issues) * 100) if open_issues else 0, 1)
+                now = dt.utcnow()
+                ages = []
+                for i in open_issues:
+                    co = i.get("created_on")
+                    if co:
+                        try:
+                            created = dt.fromisoformat(co.replace("Z", "+00:00")).replace(tzinfo=None)
+                            ages.append((now - created).days)
+                        except Exception:
+                            pass
+                avg_age = round(sum(ages) / len(ages), 1) if ages else 0
+                ms = now.replace(day=1).strftime("%Y-%m-%d")
+                bp = {"project_id": pid} if pid else {}
+                created_m = await _get_total_count({**bp, "created_on": f">={ms}", "status_id": "*"})
+                closed_m = await _get_total_count({**bp, "closed_on": f">={ms}", "status_id": "*"})
+                return _ok({
+                    "backlog": {"total_open": total_open, "high_priority_open": high + urgent + immediate, "unestimated_count": unest, "unestimated_percentage": pct_unest},
+                    "aging": {"average_days_open": avg_age},
+                    "monthly_activity": {"month": now.strftime("%B %Y"), "created_this_month": created_m, "closed_this_month": closed_m, "net_change": created_m - closed_m},
+                    "project_id": pid,
                 })
             
-            try:
-                from redmine_cache import cache
-                refresh_result = await cache.refresh(force=True)
-                
-                return json.dumps({
-                    "success": True,
-                    "message": "Cache refreshed successfully",
-                    "cache_info": refresh_result
-                }, indent=2)
-            except Exception as e:
-                return json.dumps({
-                    "success": False,
-                    "error": f"Failed to refresh cache: {str(e)}"
-                })
-        
-        elif action == "status":
-            if not REDMINE_DB_ENABLED:
-                return json.dumps({
-                    "success": True,
-                    "status": "disabled",
-                    "message": "Redmine DB cache is currently disabled"
-                }, indent=2)
+            elif tool_name == "redmine_team_workload":
+                params_tw = {"status_id": "open"}
+                pid = None
+                if arguments.get("project_id"):
+                    pid = await _resolve_project_id(arguments.get("project_id"))
+                    if pid:
+                        params_tw["project_id"] = pid
+                issues = await _fetch_all_issues(params_tw)
+                workload = {}
+                unassigned = 0
+                for i in issues:
+                    assignee = i.get("assigned_to")
+                    if assignee:
+                        name = assignee.get("name", "Unknown")
+                        workload[name] = workload.get(name, 0) + 1
+                    else:
+                        unassigned += 1
+                sorted_wl = dict(sorted(workload.items(), key=lambda x: x[1], reverse=True))
+                overloaded = {k: v for k, v in sorted_wl.items() if v > 10}
+                return _ok({"total_open_issues": len(issues), "unassigned_issues": unassigned, "team_size": len(workload), "workload_by_member": sorted_wl, "overloaded_members": overloaded, "project_id": pid})
             
-            try:
-                from redmine_cache import cache
-                cache_info = cache.get_cache_info()
-                
-                return json.dumps({
-                    "success": True,
-                    "status": "enabled",
-                    "cache_info": cache_info
-                }, indent=2)
-            except Exception as e:
-                return json.dumps({
-                    "success": False,
-                    "error": f"Failed to get cache status: {str(e)}"
-                })
+            elif tool_name == "redmine_quality_metrics":
+                base_qm = {}
+                pid = None
+                if arguments.get("project_id"):
+                    pid = await _resolve_project_id(arguments.get("project_id"))
+                    if pid:
+                        base_qm["project_id"] = pid
+                tdata = await _api_get("/trackers.json")
+                bug_tid = None
+                story_tids = []
+                for t in tdata.get("trackers", []):
+                    if t["name"].lower() == "bug":
+                        bug_tid = t["id"]
+                    elif t["name"].lower() in ("story", "user story", "feature"):
+                        story_tids.append(t["id"])
+                if not bug_tid:
+                    return _err("No 'Bug' tracker found.")
+                open_bugs = await _get_total_count({**base_qm, "status_id": "open", "tracker_id": bug_tid})
+                total_bugs = await _get_total_count({**base_qm, "status_id": "*", "tracker_id": bug_tid})
+                high_b = await _get_total_count({**base_qm, "status_id": "open", "tracker_id": bug_tid, "priority_id": 3})
+                urgent_b = await _get_total_count({**base_qm, "status_id": "open", "tracker_id": bug_tid, "priority_id": 4})
+                imm_b = await _get_total_count({**base_qm, "status_id": "open", "tracker_id": bug_tid, "priority_id": 5})
+                total_stories = 0
+                for sid in story_tids:
+                    total_stories += await _get_total_count({**base_qm, "status_id": "*", "tracker_id": sid})
+                ratio = round(total_bugs / total_stories, 2) if total_stories > 0 else None
+                return _ok({"bug_metrics": {"open_bugs": open_bugs, "closed_bugs": total_bugs - open_bugs, "total_bugs": total_bugs, "critical_open": {"high": high_b, "urgent": urgent_b, "immediate": imm_b, "total_critical": high_b + urgent_b + imm_b}, "bug_to_story_ratio": ratio, "total_stories_or_features": total_stories}, "project_id": pid})
+            
+            elif tool_name == "redmine_cycle_time":
+                from datetime import datetime as dt
+                base_ct = {"status_id": "closed", "sort": "closed_on:desc"}
+                pid = None
+                if arguments.get("project_id"):
+                    pid = await _resolve_project_id(arguments.get("project_id"))
+                    if pid:
+                        base_ct["project_id"] = pid
+                sample = arguments.get("sample_size", 50)
+                closed_issues = await _fetch_all_issues(base_ct, max_issues=sample)
+                lead_times = []
+                cycle_times = []
+                reopened = 0
+                for issue in closed_issues:
+                    co = issue.get("created_on")
+                    cl = issue.get("closed_on")
+                    if co and cl:
+                        try:
+                            created = dt.fromisoformat(co.replace("Z", "+00:00")).replace(tzinfo=None)
+                            closed = dt.fromisoformat(cl.replace("Z", "+00:00")).replace(tzinfo=None)
+                            lead_times.append((closed - created).total_seconds() / 86400)
+                        except Exception:
+                            pass
+                    try:
+                        idata = await _api_get(f"/issues/{issue['id']}.json", {"include": "journals"})
+                        journals = idata.get("issue", {}).get("journals", [])
+                        ip_at = None
+                        was_reopen = False
+                        for j in journals:
+                            for d in j.get("details", []):
+                                if d.get("name") == "status_id":
+                                    if str(d.get("new_value", "")) == "2" and ip_at is None:
+                                        ip_at = j.get("created_on")
+                                    if str(d.get("old_value", "")) == "5" and str(d.get("new_value", "")) != "5":
+                                        was_reopen = True
+                        if was_reopen:
+                            reopened += 1
+                        if ip_at and cl:
+                            ip_dt = dt.fromisoformat(ip_at.replace("Z", "+00:00")).replace(tzinfo=None)
+                            cl_dt = dt.fromisoformat(cl.replace("Z", "+00:00")).replace(tzinfo=None)
+                            ct = (cl_dt - ip_dt).total_seconds() / 86400
+                            if ct >= 0:
+                                cycle_times.append(ct)
+                    except Exception:
+                        pass
+                avg_lead = round(sum(lead_times) / len(lead_times), 1) if lead_times else None
+                avg_cycle = round(sum(cycle_times) / len(cycle_times), 1) if cycle_times else None
+                return _ok({"sample_size": len(closed_issues), "lead_time": {"average_days": avg_lead}, "cycle_time": {"average_days": avg_cycle, "samples": len(cycle_times)}, "reopened_tickets": {"count": reopened, "percentage": round(reopened / len(closed_issues) * 100, 1) if closed_issues else 0}, "project_id": pid})
+            
+            elif tool_name == "redmine_release_status":
+                pid = await _resolve_project_id(arguments.get("project_id"))
+                if pid is None:
+                    return _err(f"Could not resolve project: {arguments.get('project_id')}")
+                versions = await _list_versions(pid)
+                targets = []
+                if arguments.get("version_id"):
+                    targets = [v for v in versions if v["id"] == arguments["version_id"]]
+                elif arguments.get("version_name"):
+                    needle = arguments["version_name"].lower()
+                    targets = [v for v in versions if needle in v.get("name", "").lower()]
+                else:
+                    targets = [v for v in versions if v.get("status") == "open"]
+                if not targets:
+                    return _err("No matching versions found.")
+                sdata = await _api_get("/issue_statuses.json")
+                closed_ids = {s["id"] for s in sdata.get("issue_statuses", []) if s.get("is_closed")}
+                results = []
+                for v in targets:
+                    issues = await _fetch_all_issues({"project_id": pid, "fixed_version_id": v["id"], "status_id": "*"})
+                    total = len(issues)
+                    closed = sum(1 for i in issues if (i.get("status") or {}).get("id") in closed_ids)
+                    pct = round((closed / total * 100) if total > 0 else 0, 1)
+                    results.append({"version_name": v.get("name"), "total_issues": total, "closed_issues": closed, "open_issues": total - closed, "completion_percentage": pct})
+                return _ok({"project_id": pid, "releases": results})
+            
+            elif tool_name == "redmine_velocity_trend":
+                from datetime import datetime as dt
+                pid = await _resolve_project_id(arguments.get("project_id"))
+                if pid is None:
+                    return _err(f"Could not resolve project: {arguments.get('project_id')}")
+                versions = await _list_versions(pid)
+                closed_v = [v for v in versions if v.get("status") == "closed"]
+                def vdate(v):
+                    dd = v.get("due_date") or v.get("updated_on", "")
+                    try:
+                        return dt.fromisoformat(dd.replace("Z", "+00:00").replace("T", " ").split("+")[0])
+                    except Exception:
+                        return dt(1970, 1, 1)
+                closed_v.sort(key=vdate)
+                sprints_n = arguments.get("sprints", 5)
+                recent = closed_v[-sprints_n:] if len(closed_v) >= sprints_n else closed_v
+                sdata = await _api_get("/issue_statuses.json")
+                closed_ids = {s["id"] for s in sdata.get("issue_statuses", []) if s.get("is_closed")}
+                vel = []
+                for v in recent:
+                    issues = await _fetch_all_issues({"project_id": pid, "fixed_version_id": v["id"], "status_id": "*"})
+                    completed = [i for i in issues if (i.get("status") or {}).get("id") in closed_ids]
+                    est = round(sum(float(i.get("estimated_hours") or 0) for i in completed), 1)
+                    vel.append({"sprint": v.get("name"), "completed_issues": len(completed), "total_issues": len(issues), "completed_estimated_hours": est})
+                if len(vel) >= 2:
+                    vals = [v["completed_issues"] for v in vel]
+                    fh = sum(vals[:len(vals)//2]) / max(len(vals)//2, 1)
+                    sh = sum(vals[len(vals)//2:]) / max(len(vals) - len(vals)//2, 1)
+                    trend = "increasing" if sh > fh * 1.1 else ("decreasing" if sh < fh * 0.9 else "stable")
+                    avg = round(sum(vals) / len(vals), 1)
+                else:
+                    trend = "insufficient_data"
+                    avg = vel[0]["completed_issues"] if vel else 0
+                return _ok({"project_id": pid, "sprints_analyzed": len(vel), "velocity_trend": trend, "average_velocity": avg, "per_sprint": vel})
+            
+            elif tool_name == "redmine_throughput":
+                from datetime import datetime as dt, timedelta as td
+                base_tp = {"status_id": "*"}
+                pid = None
+                if arguments.get("project_id"):
+                    pid = await _resolve_project_id(arguments.get("project_id"))
+                    if pid:
+                        base_tp["project_id"] = pid
+                weeks = arguments.get("weeks", 4)
+                now = dt.utcnow()
+                weekly = []
+                for w in range(weeks):
+                    we = now - td(days=w * 7)
+                    ws = we - td(days=7)
+                    ws_s = ws.strftime("%Y-%m-%d")
+                    we_s = we.strftime("%Y-%m-%d")
+                    created = await _get_total_count({**base_tp, "created_on": f"><{ws_s}|{we_s}"})
+                    closed = await _get_total_count({**base_tp, "closed_on": f"><{ws_s}|{we_s}"})
+                    weekly.append({"week": f"{ws_s} to {we_s}", "created": created, "closed": closed, "net": closed - created})
+                weekly.reverse()
+                tc = sum(w["created"] for w in weekly)
+                tl = sum(w["closed"] for w in weekly)
+                return _ok({"project_id": pid, "period_weeks": weeks, "total_created": tc, "total_closed": tl, "net_throughput": tl - tc, "trend": "positive" if tl >= tc else "negative", "avg_created_per_week": round(tc / weeks, 1), "avg_closed_per_week": round(tl / weeks, 1), "weekly_breakdown": weekly})
+            
+            else:
+                return json.dumps({"success": False, "error": f"Unknown redmine tool: {tool_name}"})
         
-        else:
-            return json.dumps({
-                "success": False,
-                "error": f"Unknown action: {action}. Use 'on', 'off', 'refresh', or 'status'"
-            })
-    
-    # ===== ANALYTICS TOOLS (Cache-Powered) =====
-    
-    elif tool_name == "redmine_sprint_status":
-        # Use direct API for accurate counts
-        try:
-            from redmine_direct import sprint_count
-            version_name = arguments.get("version_name")
-            project_id = arguments.get("project_id")
-            result = await sprint_count(project_id, version_name)
-            return json.dumps(result, indent=2)
-        except Exception as e:
-            return json.dumps({"success": False, "error": str(e)})
-    
-    elif tool_name == "redmine_backlog_analytics":
-        # Use direct API for accurate counts
-        try:
-            from redmine_direct import backlog_count
-            project_id = arguments.get("project_id")
-            result = await backlog_count(project_id)
-            return json.dumps(result, indent=2)
-        except Exception as e:
-            return json.dumps({"success": False, "error": str(e)})
-    
-    elif tool_name == "redmine_team_workload":
-        if not REDMINE_DB_ENABLED:
-            return json.dumps({
-                "success": False,
-                "error": "Redmine DB cache is disabled. Enable it first with 'redmine_db_control' action='on'"
-            })
-        
-        try:
-            from redmine_analytics import team_workload_analytics
-            project_id = arguments.get("project_id")
-            result = team_workload_analytics(project_id)
-            return json.dumps(result, indent=2)
-        except Exception as e:
-            return json.dumps({"success": False, "error": str(e)})
-    
-    elif tool_name == "redmine_cycle_time":
-        if not REDMINE_DB_ENABLED:
-            return json.dumps({
-                "success": False,
-                "error": "Redmine DB cache is disabled. Enable it first with 'redmine_db_control' action='on'"
-            })
-        
-        try:
-            from redmine_analytics import cycle_time_analytics
-            project_id = arguments.get("project_id")
-            result = cycle_time_analytics(project_id)
-            return json.dumps(result, indent=2)
-        except Exception as e:
-            return json.dumps({"success": False, "error": str(e)})
-    
-    elif tool_name == "redmine_bug_analytics":
-        # Use direct API for accurate counts
-        try:
-            from redmine_direct import bug_count
-            project_id = arguments.get("project_id")
-            result = await bug_count(project_id)
-            return json.dumps(result, indent=2)
-        except Exception as e:
-            return json.dumps({"success": False, "error": str(e)})
-    
-    elif tool_name == "redmine_release_status":
-        if not REDMINE_DB_ENABLED:
-            return json.dumps({
-                "success": False,
-                "error": "Redmine DB cache is disabled. Enable it first with 'redmine_db_control' action='on'"
-            })
-        
-        try:
-            from redmine_analytics import release_analytics
-            version_name = arguments.get("version_name")
-            result = release_analytics(version_name)
-            return json.dumps(result, indent=2)
-        except Exception as e:
-            return json.dumps({"success": False, "error": str(e)})
-    
-    elif tool_name == "redmine_velocity_trend":
-        if not REDMINE_DB_ENABLED:
-            return json.dumps({
-                "success": False,
-                "error": "Redmine DB cache is disabled. Enable it first with 'redmine_db_control' action='on'"
-            })
-        
-        try:
-            from redmine_analytics import velocity_trend_analytics
-            project_id = arguments.get("project_id")
-            sprints = arguments.get("sprints", 5)
-            result = velocity_trend_analytics(project_id, sprints)
-            return json.dumps(result, indent=2)
-        except Exception as e:
-            return json.dumps({"success": False, "error": str(e)})
-    
-    elif tool_name == "redmine_throughput":
-        if not REDMINE_DB_ENABLED:
-            return json.dumps({
-                "success": False,
-                "error": "Redmine DB cache is disabled. Enable it first with 'redmine_db_control' action='on'"
-            })
-        
-        try:
-            from redmine_analytics import throughput_analytics
-            project_id = arguments.get("project_id")
-            weeks = arguments.get("weeks", 4)
-            result = throughput_analytics(project_id, weeks)
-            return json.dumps(result, indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)})
     
     return json.dumps({"error": "Unknown tool"})
-
-
-# Direct Redmine DB Cache Control Endpoint (for UI toggle)
-@app.post("/api/redmine-cache")
-async def redmine_cache_control(request: dict):
-    global REDMINE_DB_ENABLED
-    
-    action = request.get("action", "status")
-    
-    if action == "on":
-        if REDMINE_DB_ENABLED:
-            return {
-                "success": True,
-                "message": "Redmine DB cache is already enabled",
-                "status": "enabled"
-            }
-        
-        # Enable cache and trigger initial refresh
-        REDMINE_DB_ENABLED = True
-        
-        try:
-            from redmine_cache import cache
-            refresh_result = await cache.refresh(force=True)
-            
-            return {
-                "success": True,
-                "message": "Redmine DB cache enabled and initialized",
-                "status": "enabled",
-                "cache_info": refresh_result
-            }
-        except Exception as e:
-            REDMINE_DB_ENABLED = False
-            return {
-                "success": False,
-                "error": f"Failed to initialize cache: {str(e)}"
-            }
-    
-    elif action == "off":
-        if not REDMINE_DB_ENABLED:
-            return {
-                "success": True,
-                "message": "Redmine DB cache is already disabled",
-                "status": "disabled"
-            }
-        
-        REDMINE_DB_ENABLED = False
-        return {
-            "success": True,
-            "message": "Redmine DB cache disabled",
-            "status": "disabled"
-        }
-    
-    elif action == "status":
-        if not REDMINE_DB_ENABLED:
-            return {
-                "success": True,
-                "status": "disabled",
-                "message": "Redmine DB cache is currently disabled"
-            }
-        
-        try:
-            from redmine_cache import cache
-            cache_info = cache.get_cache_info()
-            
-            return {
-                "success": True,
-                "status": "enabled",
-                "cache_info": cache_info
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": f"Failed to get cache status: {str(e)}"
-            }
-    
-    else:
-        return {
-            "success": False,
-            "error": f"Unknown action: {action}. Use 'on', 'off', or 'status'"
-        }
 
 
 # Health check endpoint
@@ -1703,13 +1613,17 @@ Available tools: {', '.join(category_tool_names)}"""
                     # Parse arguments
                     args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
                     
-                    # Fix common type issues and null values
-                    if tool_call.function.name == "redmine_list_issues":
+                    # Fix common type issues and null values for all redmine tools
+                    if tool_call.function.name.startswith("redmine_"):
                         # Remove null values
                         args = {k: v for k, v in args.items() if v is not None and v != "null"}
                         
-                        # Fix status - map invalid values to valid ones
-                        if "status" in args:
+                        # Convert numeric project_id to string (new tools expect string)
+                        if "project_id" in args and isinstance(args["project_id"], int):
+                            args["project_id"] = str(args["project_id"])
+                        
+                        # Fix status values for list_issues
+                        if tool_call.function.name == "redmine_list_issues" and "status" in args:
                             status_map = {
                                 "committed": "all",
                                 "in progress": "open",
@@ -1724,19 +1638,14 @@ Available tools: {', '.join(category_tool_names)}"""
                                 args["status"] = status_map[status_lower]
                                 print(f"  Mapped status '{status_lower}' -> '{args['status']}'")
                             elif status_lower not in ["open", "closed", "all"]:
-                                args["status"] = "all"  # Default to all if invalid
+                                args["status"] = "all"
                         
                         # Fix limit type
                         if "limit" in args and isinstance(args["limit"], str):
                             try:
-                                args["limit"] = int(args["limit"]) if args["limit"] != "-1" else 25
+                                args["limit"] = int(args["limit"]) if args["limit"] != "-1" else -1
                             except:
                                 args["limit"] = 25
-                        
-                        # Remove invalid project_id (like 12345 which doesn't exist)
-                        if "project_id" in args and isinstance(args["project_id"], int):
-                            args.pop("project_id")
-                            print(f"  Removed invalid numeric project_id")
                     
                     # Call MCP tool
                     tool_result = await call_mcp_tool(tool_call.function.name, args)

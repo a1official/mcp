@@ -1,7 +1,570 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, Sparkles, Mail, Music, Github, Play, Pause, Settings, X } from 'lucide-react';
+import {
+  Send, Loader2, Sparkles, Music, Github, Play, Pause, Settings, X,
+  BarChart3, Bug, Users, Clock, Rocket, TrendingUp, Activity,
+  FolderKanban, Hash, AlertTriangle, CheckCircle2, Circle, ArrowUpRight,
+  ArrowDownRight, Minus, ChevronRight, ListTodo, Tag, Calendar, User,
+  Layers
+} from 'lucide-react';
 import './App.css';
 
+/* ------------------------------------------------------------------ */
+/*  Utility helpers                                                    */
+/* ------------------------------------------------------------------ */
+const fmtDate = (d) => {
+  if (!d) return '--';
+  try { return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+  catch { return d; }
+};
+const pct = (n, t) => (t > 0 ? ((n / t) * 100).toFixed(1) : '0');
+const safeNum = (v) => (typeof v === 'number' ? v : 0);
+
+/* ------------------------------------------------------------------ */
+/*  Structured content renderers                                       */
+/* ------------------------------------------------------------------ */
+
+/* -- Sprint Analytics Card -- */
+function SprintCard({ data }) {
+  const m = data.metrics || {};
+  const sprint = data.sprint || {};
+  const byStatus = data.breakdown_by_status || {};
+  const assess = data.burndown_assessment || '';
+  const assessColor = assess === 'on_track' ? 'var(--accent-green)' : assess === 'at_risk' ? 'var(--accent-amber)' : 'var(--accent-red)';
+
+  return (
+    <div className="card analytics-card">
+      <div className="card-header">
+        <div className="card-header-left">
+          <div className="card-icon sprint"><BarChart3 size={18} /></div>
+          <div>
+            <h3 className="card-title">Sprint Analytics</h3>
+            <span className="card-subtitle">{sprint.name || 'Current Sprint'}{sprint.due_date ? ` \u2022 Due ${fmtDate(sprint.due_date)}` : ''}</span>
+          </div>
+        </div>
+        <span className="status-pill" style={{ background: assessColor + '22', color: assessColor, borderColor: assessColor + '44' }}>
+          {assess.replace('_', ' ')}
+        </span>
+      </div>
+      <div className="metric-grid cols-4">
+        <MetricTile label="Committed" value={safeNum(m.total_committed)} variant="default" />
+        <MetricTile label="Completed" value={safeNum(m.completed)} variant="success" />
+        <MetricTile label="In Progress" value={safeNum(m.in_progress)} variant="info" />
+        <MetricTile label="Blocked" value={safeNum(m.blocked)} variant="danger" />
+      </div>
+      <div className="progress-section">
+        <div className="progress-header">
+          <span className="progress-label">Completion</span>
+          <span className="progress-pct">{safeNum(m.completion_percentage)}%</span>
+        </div>
+        <div className="progress-track">
+          <div className="progress-fill" style={{ width: `${Math.min(safeNum(m.completion_percentage), 100)}%` }} />
+        </div>
+      </div>
+      {Object.keys(byStatus).length > 0 && (
+        <div className="breakdown-row">
+          {Object.entries(byStatus).map(([status, count]) => (
+            <span key={status} className="breakdown-chip">{status}: <strong>{count}</strong></span>
+          ))}
+        </div>
+      )}
+      {(m.total_estimated_hours > 0 || m.total_spent_hours > 0) && (
+        <div className="hours-row">
+          <span className="hours-item">Est: <strong>{safeNum(m.total_estimated_hours)}h</strong></span>
+          <span className="hours-item">Spent: <strong>{safeNum(m.total_spent_hours)}h</strong></span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* -- Backlog Analytics Card -- */
+function BacklogCard({ data }) {
+  const bl = data.backlog || {};
+  const aging = data.aging || {};
+  const monthly = data.monthly_activity || {};
+  return (
+    <div className="card analytics-card">
+      <div className="card-header">
+        <div className="card-header-left">
+          <div className="card-icon backlog"><ListTodo size={18} /></div>
+          <div>
+            <h3 className="card-title">Backlog Analytics</h3>
+            <span className="card-subtitle">{monthly.month || ''}</span>
+          </div>
+        </div>
+      </div>
+      <div className="metric-grid cols-4">
+        <MetricTile label="Open Items" value={safeNum(bl.total_open)} variant="default" />
+        <MetricTile label="High Priority" value={safeNum(bl.high_priority_open)} variant="danger" />
+        <MetricTile label="Unestimated" value={`${safeNum(bl.unestimated_percentage)}%`} variant="warning" />
+        <MetricTile label="Avg Age" value={`${safeNum(aging.average_days_open)}d`} variant="info" />
+      </div>
+      {(monthly.created_this_month !== undefined) && (
+        <div className="monthly-row">
+          <div className="monthly-item created">
+            <ArrowUpRight size={16} />
+            <span>Created: <strong>{safeNum(monthly.created_this_month)}</strong></span>
+          </div>
+          <div className="monthly-item closed">
+            <ArrowDownRight size={16} />
+            <span>Closed: <strong>{safeNum(monthly.closed_this_month)}</strong></span>
+          </div>
+          <div className={`monthly-item ${safeNum(monthly.net_change) <= 0 ? 'closed' : 'created'}`}>
+            <Minus size={16} />
+            <span>Net: <strong>{monthly.net_change > 0 ? '+' : ''}{safeNum(monthly.net_change)}</strong></span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* -- Team Workload Card -- */
+function WorkloadCard({ data }) {
+  const workload = data.workload_by_member || {};
+  const overloaded = data.overloaded_members || {};
+  const entries = Object.entries(workload);
+  const maxVal = Math.max(...entries.map(([,v]) => v), 1);
+  return (
+    <div className="card analytics-card">
+      <div className="card-header">
+        <div className="card-header-left">
+          <div className="card-icon workload"><Users size={18} /></div>
+          <div>
+            <h3 className="card-title">Team Workload</h3>
+            <span className="card-subtitle">{data.team_size || entries.length} members \u2022 {safeNum(data.total_open_issues)} open \u2022 {safeNum(data.unassigned_issues)} unassigned</span>
+          </div>
+        </div>
+      </div>
+      <div className="workload-bars">
+        {entries.slice(0, 12).map(([name, count]) => {
+          const isOver = overloaded[name] !== undefined;
+          return (
+            <div key={name} className="wl-row">
+              <span className={`wl-name ${isOver ? 'overloaded' : ''}`}>{name}</span>
+              <div className="wl-track">
+                <div className={`wl-fill ${isOver ? 'over' : ''}`} style={{ width: `${(count / maxVal) * 100}%` }}>
+                  <span className="wl-count">{count}</span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* -- Quality / Bug Metrics Card -- */
+function QualityCard({ data }) {
+  const bm = data.bug_metrics || {};
+  const crit = bm.critical_open || {};
+  return (
+    <div className="card analytics-card">
+      <div className="card-header">
+        <div className="card-header-left">
+          <div className="card-icon quality"><Bug size={18} /></div>
+          <div>
+            <h3 className="card-title">Quality Metrics</h3>
+            <span className="card-subtitle">Bug-to-story ratio: {bm.bug_to_story_ratio ?? 'N/A'}</span>
+          </div>
+        </div>
+      </div>
+      <div className="metric-grid cols-4">
+        <MetricTile label="Open Bugs" value={safeNum(bm.open_bugs)} variant="warning" />
+        <MetricTile label="Closed Bugs" value={safeNum(bm.closed_bugs)} variant="success" />
+        <MetricTile label="Total Bugs" value={safeNum(bm.total_bugs)} variant="default" />
+        <MetricTile label="Critical Open" value={safeNum(crit.total_critical)} variant="danger" />
+      </div>
+      {(crit.high > 0 || crit.urgent > 0 || crit.immediate > 0) && (
+        <div className="breakdown-row">
+          {crit.high > 0 && <span className="breakdown-chip warning">High: {crit.high}</span>}
+          {crit.urgent > 0 && <span className="breakdown-chip danger">Urgent: {crit.urgent}</span>}
+          {crit.immediate > 0 && <span className="breakdown-chip danger">Immediate: {crit.immediate}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* -- Cycle Time Card -- */
+function CycleTimeCard({ data }) {
+  const lead = data.lead_time || {};
+  const cycle = data.cycle_time || {};
+  const reopen = data.reopened_tickets || {};
+  const maxDays = Math.max(safeNum(lead.average_days), safeNum(cycle.average_days), 1);
+  return (
+    <div className="card analytics-card">
+      <div className="card-header">
+        <div className="card-header-left">
+          <div className="card-icon cycle"><Clock size={18} /></div>
+          <div>
+            <h3 className="card-title">Cycle Time</h3>
+            <span className="card-subtitle">Sample: {safeNum(data.sample_size)} closed issues</span>
+          </div>
+        </div>
+      </div>
+      <div className="time-bars">
+        <div className="time-row">
+          <span className="time-label">Lead Time</span>
+          <div className="time-track">
+            <div className="time-fill lead" style={{ width: `${(safeNum(lead.average_days) / maxDays) * 100}%` }}>
+              {lead.average_days != null ? `${lead.average_days} days` : '--'}
+            </div>
+          </div>
+        </div>
+        <div className="time-row">
+          <span className="time-label">Cycle Time</span>
+          <div className="time-track">
+            <div className="time-fill cycle" style={{ width: `${(safeNum(cycle.average_days) / maxDays) * 100}%` }}>
+              {cycle.average_days != null ? `${cycle.average_days} days` : '--'}
+            </div>
+          </div>
+        </div>
+      </div>
+      {safeNum(reopen.count) > 0 && (
+        <div className="alert-row warning">
+          <AlertTriangle size={16} />
+          <span>{reopen.count} tickets reopened ({reopen.percentage}%)</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* -- Release Status Card -- */
+function ReleaseCard({ data }) {
+  const releases = data.releases || [];
+  return (
+    <div className="card analytics-card">
+      <div className="card-header">
+        <div className="card-header-left">
+          <div className="card-icon release"><Rocket size={18} /></div>
+          <div>
+            <h3 className="card-title">Release Status</h3>
+            <span className="card-subtitle">{releases.length} version(s)</span>
+          </div>
+        </div>
+      </div>
+      <div className="release-list">
+        {releases.map((r, i) => (
+          <div key={i} className="release-item">
+            <div className="release-item-header">
+              <span className="release-name">{r.version_name}</span>
+              <span className="release-pct">{safeNum(r.completion_percentage)}%</span>
+            </div>
+            <div className="progress-track">
+              <div className="progress-fill" style={{ width: `${Math.min(safeNum(r.completion_percentage), 100)}%` }} />
+            </div>
+            <div className="release-meta">
+              <span>Total: {r.total_issues}</span>
+              <span>Closed: {r.closed_issues}</span>
+              <span>Open: {r.open_issues}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* -- Velocity Trend Card -- */
+function VelocityCard({ data }) {
+  const sprints = data.per_sprint || [];
+  const maxCompleted = Math.max(...sprints.map(s => s.completed_issues), 1);
+  const trend = data.velocity_trend || 'stable';
+  const TrendIcon = trend === 'increasing' ? ArrowUpRight : trend === 'decreasing' ? ArrowDownRight : Minus;
+  const trendColor = trend === 'increasing' ? 'var(--accent-green)' : trend === 'decreasing' ? 'var(--accent-red)' : 'var(--accent-blue)';
+  return (
+    <div className="card analytics-card">
+      <div className="card-header">
+        <div className="card-header-left">
+          <div className="card-icon velocity"><TrendingUp size={18} /></div>
+          <div>
+            <h3 className="card-title">Velocity Trend</h3>
+            <span className="card-subtitle">{sprints.length} sprints analyzed \u2022 Avg: {data.average_velocity}</span>
+          </div>
+        </div>
+        <span className="status-pill" style={{ background: trendColor + '22', color: trendColor, borderColor: trendColor + '44' }}>
+          <TrendIcon size={14} /> {trend}
+        </span>
+      </div>
+      <div className="velocity-bars">
+        {sprints.map((s, i) => (
+          <div key={i} className="vel-col">
+            <div className="vel-bar-wrap">
+              <div className="vel-bar" style={{ height: `${(s.completed_issues / maxCompleted) * 100}%` }}>
+                <span className="vel-val">{s.completed_issues}</span>
+              </div>
+            </div>
+            <span className="vel-label" title={s.sprint}>{s.sprint?.slice(0, 12)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* -- Throughput Card -- */
+function ThroughputCard({ data }) {
+  const weekly = data.weekly_breakdown || [];
+  const trend = data.trend || '';
+  const trendColor = trend === 'positive' ? 'var(--accent-green)' : 'var(--accent-red)';
+  return (
+    <div className="card analytics-card">
+      <div className="card-header">
+        <div className="card-header-left">
+          <div className="card-icon throughput"><Activity size={18} /></div>
+          <div>
+            <h3 className="card-title">Throughput</h3>
+            <span className="card-subtitle">{data.period_weeks} weeks \u2022 Avg {data.avg_created_per_week}/wk created, {data.avg_closed_per_week}/wk closed</span>
+          </div>
+        </div>
+        <span className="status-pill" style={{ background: trendColor + '22', color: trendColor, borderColor: trendColor + '44' }}>
+          Net: {data.net_throughput > 0 ? '+' : ''}{safeNum(data.net_throughput)}
+        </span>
+      </div>
+      <div className="throughput-table">
+        <div className="tp-header-row">
+          <span>Week</span><span>Created</span><span>Closed</span><span>Net</span>
+        </div>
+        {weekly.map((w, i) => (
+          <div key={i} className="tp-row">
+            <span className="tp-week">{w.week}</span>
+            <span className="tp-created">{w.created}</span>
+            <span className="tp-closed">{w.closed}</span>
+            <span className={`tp-net ${w.net >= 0 ? 'pos' : 'neg'}`}>{w.net > 0 ? '+' : ''}{w.net}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* -- Issues List Card -- */
+function IssuesCard({ data }) {
+  const issues = data.issues || [];
+  return (
+    <div className="card">
+      <div className="card-header">
+        <div className="card-header-left">
+          <div className="card-icon issues"><FolderKanban size={18} /></div>
+          <div>
+            <h3 className="card-title">Issues</h3>
+            <span className="card-subtitle">Showing {issues.length} of {safeNum(data.total_count)}</span>
+          </div>
+        </div>
+      </div>
+      <div className="issues-list">
+        {issues.slice(0, 15).map((issue) => (
+          <div key={issue.id} className="issue-row">
+            <div className="issue-row-top">
+              <span className="issue-id">#{issue.id}</span>
+              {issue.tracker && <span className="chip tracker">{issue.tracker}</span>}
+              {issue.status && <StatusChip status={issue.status} />}
+              {issue.priority && <PriorityChip priority={issue.priority} />}
+            </div>
+            <div className="issue-subject">{issue.subject}</div>
+            <div className="issue-row-meta">
+              {issue.project && <span><FolderKanban size={12} /> {issue.project}</span>}
+              {issue.assigned_to && <span><User size={12} /> {issue.assigned_to}</span>}
+              {issue.version && <span><Tag size={12} /> {issue.version}</span>}
+              {issue.updated_on && <span><Calendar size={12} /> {fmtDate(issue.updated_on)}</span>}
+              {issue.done_ratio > 0 && <span><CheckCircle2 size={12} /> {issue.done_ratio}%</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* -- Projects List Card -- */
+function ProjectsCard({ data }) {
+  const projects = data.projects || [];
+  return (
+    <div className="card">
+      <div className="card-header">
+        <div className="card-header-left">
+          <div className="card-icon projects"><Layers size={18} /></div>
+          <div>
+            <h3 className="card-title">Projects</h3>
+            <span className="card-subtitle">{safeNum(data.count)} projects</span>
+          </div>
+        </div>
+      </div>
+      <div className="projects-grid">
+        {projects.map((p) => (
+          <div key={p.id} className="project-tile">
+            <div className="project-tile-header">
+              <span className="project-name">{p.name}</span>
+              <span className="project-id">{p.identifier}</span>
+            </div>
+            {p.description && <p className="project-desc">{(p.description || '').slice(0, 120)}</p>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* -- Versions List Card -- */
+function VersionsCard({ data }) {
+  const versions = data.versions || [];
+  return (
+    <div className="card">
+      <div className="card-header">
+        <div className="card-header-left">
+          <div className="card-icon versions"><Tag size={18} /></div>
+          <div>
+            <h3 className="card-title">Versions / Sprints</h3>
+            <span className="card-subtitle">{safeNum(data.count)} versions</span>
+          </div>
+        </div>
+      </div>
+      <div className="versions-list">
+        {versions.map((v) => (
+          <div key={v.id} className="version-row">
+            <span className="version-name">{v.name}</span>
+            <StatusChip status={v.status || 'open'} />
+            {v.due_date && <span className="version-due">{fmtDate(v.due_date)}</span>}
+            <span className="version-id">ID: {v.id}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* -- Single Issue Detail Card -- */
+function IssueDetailCard({ data }) {
+  const issue = data.issue || data;
+  const journals = issue.journals || [];
+  return (
+    <div className="card">
+      <div className="card-header">
+        <div className="card-header-left">
+          <div className="card-icon issues"><Hash size={18} /></div>
+          <div>
+            <h3 className="card-title">Issue #{issue.id}</h3>
+            <span className="card-subtitle">{issue.tracker} \u2022 {issue.project}</span>
+          </div>
+        </div>
+        <div className="chip-group">
+          {issue.status && <StatusChip status={issue.status} />}
+          {issue.priority && <PriorityChip priority={issue.priority} />}
+        </div>
+      </div>
+      <h4 className="issue-detail-subject">{issue.subject}</h4>
+      {issue.description && <div className="issue-detail-desc">{issue.description}</div>}
+      <div className="detail-grid">
+        {issue.assigned_to && <DetailItem label="Assignee" value={issue.assigned_to} />}
+        {issue.author && <DetailItem label="Author" value={issue.author} />}
+        {issue.version && <DetailItem label="Version" value={issue.version} />}
+        <DetailItem label="Created" value={fmtDate(issue.created_on)} />
+        <DetailItem label="Updated" value={fmtDate(issue.updated_on)} />
+        {issue.estimated_hours != null && <DetailItem label="Estimated" value={`${issue.estimated_hours}h`} />}
+        {issue.done_ratio != null && (
+          <div className="detail-item span-2">
+            <span className="detail-label">Progress</span>
+            <div className="progress-track sm">
+              <div className="progress-fill" style={{ width: `${issue.done_ratio}%` }} />
+            </div>
+            <span className="detail-value">{issue.done_ratio}%</span>
+          </div>
+        )}
+      </div>
+      {journals.length > 0 && (
+        <div className="journal-section">
+          <h5 className="journal-title">Recent Activity</h5>
+          {journals.slice(-5).map((j) => (
+            <div key={j.id} className="journal-entry">
+              <div className="journal-header">
+                <span className="journal-user">{j.user}</span>
+                <span className="journal-date">{fmtDate(j.created_on)}</span>
+              </div>
+              {j.notes && <p className="journal-notes">{j.notes}</p>}
+              {j.details && j.details.length > 0 && (
+                <div className="journal-details">
+                  {j.details.map((d, idx) => (
+                    <span key={idx} className="journal-change">{d.name}: {d.old_value || '--'} &rarr; {d.new_value || '--'}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* -- Trackers / Statuses List -- */
+function SimpleListCard({ title, icon: Icon, items, labelKey = 'name', idKey = 'id' }) {
+  return (
+    <div className="card">
+      <div className="card-header">
+        <div className="card-header-left">
+          <div className="card-icon default"><Icon size={18} /></div>
+          <h3 className="card-title">{title}</h3>
+        </div>
+      </div>
+      <div className="simple-list">
+        {items.map((item) => (
+          <div key={item[idKey]} className="simple-list-item">
+            <span className="simple-list-name">{item[labelKey]}</span>
+            <span className="simple-list-id">ID: {item[idKey]}</span>
+            {item.is_closed !== undefined && (
+              <span className={`chip ${item.is_closed ? 'closed' : 'open'}`}>{item.is_closed ? 'Closed' : 'Open'}</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* -- Tiny reusable components -- */
+function MetricTile({ label, value, variant = 'default' }) {
+  return (
+    <div className={`metric-tile ${variant}`}>
+      <div className="metric-tile-value">{value}</div>
+      <div className="metric-tile-label">{label}</div>
+    </div>
+  );
+}
+
+function StatusChip({ status }) {
+  const s = (status || '').toLowerCase().replace(/\s+/g, '-');
+  const cls = s.includes('closed') || s.includes('resolved') ? 'success'
+    : s.includes('progress') ? 'info'
+    : s.includes('feedback') || s.includes('blocked') ? 'warning'
+    : s.includes('new') || s.includes('open') ? 'primary'
+    : 'default';
+  return <span className={`chip ${cls}`}>{status}</span>;
+}
+
+function PriorityChip({ priority }) {
+  const p = (priority || '').toLowerCase();
+  const cls = p === 'urgent' || p === 'immediate' ? 'danger'
+    : p === 'high' ? 'warning'
+    : p === 'low' ? 'muted'
+    : 'default';
+  return <span className={`chip ${cls}`}>{priority}</span>;
+}
+
+function DetailItem({ label, value }) {
+  return (
+    <div className="detail-item">
+      <span className="detail-label">{label}</span>
+      <span className="detail-value">{value}</span>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Main App                                                           */
+/* ------------------------------------------------------------------ */
 function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -10,751 +573,206 @@ function App() {
   const [currentTrack, setCurrentTrack] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [showToolsPanel, setShowToolsPanel] = useState(false);
-  const [enabledTools, setEnabledTools] = useState({
-    music: true,
-    playwright: true,
-    redmine: true,
-  });
-  const [redmineDbEnabled, setRedmineDbEnabled] = useState(false);
-  const [redmineDbLoading, setRedmineDbLoading] = useState(false);
-  const [redmineDbStatus, setRedmineDbStatus] = useState(null);
-  const [cacheLoadProgress, setCacheLoadProgress] = useState(0);
+  const [enabledTools, setEnabledTools] = useState({ music: true, playwright: true, redmine: true });
   const messagesEndRef = useRef(null);
   const audioRef = useRef(null);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  useEffect(() => { scrollToBottom(); }, [messages]);
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  useEffect(() => {
-    // Create audio element
     audioRef.current = new Audio();
-    audioRef.current.addEventListener('ended', () => {
-      setIsPlaying(false);
-    });
-    audioRef.current.addEventListener('play', () => {
-      setIsPlaying(true);
-    });
-    audioRef.current.addEventListener('pause', () => {
-      setIsPlaying(false);
-    });
-
-    return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-    };
+    audioRef.current.addEventListener('ended', () => setIsPlaying(false));
+    audioRef.current.addEventListener('play', () => setIsPlaying(true));
+    audioRef.current.addEventListener('pause', () => setIsPlaying(false));
+    return () => { if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; } };
   }, []);
 
   const playTrack = (track) => {
-    console.log('playTrack called with:', track);
     if (audioRef.current && track.previewUrl) {
-      try {
-        audioRef.current.src = track.previewUrl;
-        audioRef.current.play()
-          .then(() => {
-            console.log('Audio playing successfully');
-            setCurrentTrack(track);
-            setIsPlaying(true);
-          })
-          .catch(err => {
-            console.error('Error playing audio:', err);
-            alert('Failed to play audio. Please check browser permissions.');
-          });
-      } catch (err) {
-        console.error('Error setting audio source:', err);
-      }
-    } else {
-      console.error('No audio ref or preview URL:', { audioRef: audioRef.current, previewUrl: track.previewUrl });
+      audioRef.current.src = track.previewUrl;
+      audioRef.current.play().then(() => { setCurrentTrack(track); setIsPlaying(true); }).catch(() => {});
     }
   };
+  const togglePlayPause = () => { if (audioRef.current) { isPlaying ? audioRef.current.pause() : audioRef.current.play(); } };
 
-  const togglePlayPause = () => {
-    if (audioRef.current) {
-      if (isPlaying) {
-        audioRef.current.pause();
-      } else {
-        audioRef.current.play();
-      }
-    }
-  };
-
-  // Redmine DB Cache Control
-  const toggleRedmineDb = async (enabled) => {
-    setRedmineDbLoading(true);
-    setCacheLoadProgress(0);
-    
-    let progressInterval = null;
-    
-    try {
-      const action = enabled ? 'on' : 'off';
-      
-      // Auto-enable Redmine category when enabling DB
-      if (enabled && !enabledTools.redmine) {
-        setEnabledTools(prev => ({
-          ...prev,
-          redmine: true
-        }));
-      }
-      
-      // Simulate progress for loading animation
-      if (enabled) {
-        progressInterval = setInterval(() => {
-          setCacheLoadProgress(prev => {
-            if (prev >= 90) return 90;
-            return prev + 10;
-          });
-        }, 400);
-      }
-      
-      const response = await fetch('http://localhost:3001/api/redmine-cache', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action })
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const result = await response.json();
-      console.log('Toggle response:', result);
-      
-      if (result.success) {
-        setRedmineDbEnabled(enabled);
-        setCacheLoadProgress(100);
-        
-        // Fetch status after enabling
-        if (enabled && result.cache_info) {
-          setRedmineDbStatus(result.cache_info);
-        } else if (!enabled) {
-          setRedmineDbStatus(null);
-        }
-      } else {
-        throw new Error(result.error || 'Failed to toggle cache');
-      }
-    } catch (error) {
-      console.error('Error toggling Redmine DB:', error);
-      alert(`Failed to toggle Redmine DB cache: ${error.message}`);
-      setRedmineDbEnabled(!enabled); // Revert toggle
-    } finally {
-      if (progressInterval) {
-        clearInterval(progressInterval);
-      }
-      setRedmineDbLoading(false);
-      setTimeout(() => setCacheLoadProgress(0), 1000);
-    }
-  };
-
-  const fetchRedmineDbStatus = async () => {
-    try {
-      const response = await fetch('http://localhost:3001/api/redmine-cache', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'status' })
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const result = await response.json();
-      console.log('Status response:', result);
-      
-      if (result.success) {
-        // Check if cache is enabled
-        if (result.status === 'enabled' && result.cache_info) {
-          setRedmineDbEnabled(true);
-          setRedmineDbStatus(result.cache_info);
-        } else if (result.status === 'disabled') {
-          setRedmineDbEnabled(false);
-          setRedmineDbStatus(null);
+  /* ---- Parse structured data from assistant response ---- */
+  const tryParseStructured = (content) => {
+    // 1. Try to find JSON blocks in content
+    const jsonBlocks = [];
+    // Match {... "success": true ...} patterns
+    const regex = /\{[\s\S]*?"success"\s*:\s*true[\s\S]*?\}(?=\s*(?:[^{]|$))/g;
+    let match;
+    // More robust: try to find the largest JSON object
+    let braceDepth = 0;
+    let start = -1;
+    for (let i = 0; i < content.length; i++) {
+      if (content[i] === '{') {
+        if (braceDepth === 0) start = i;
+        braceDepth++;
+      } else if (content[i] === '}') {
+        braceDepth--;
+        if (braceDepth === 0 && start !== -1) {
+          const candidate = content.slice(start, i + 1);
+          try {
+            const parsed = JSON.parse(candidate);
+            if (parsed.success === true) jsonBlocks.push(parsed);
+          } catch {}
+          start = -1;
         }
       }
-    } catch (error) {
-      console.error('Error fetching Redmine DB status:', error);
-      // Don't show alert for status check failures
     }
+    return jsonBlocks;
   };
 
-  // Check Redmine DB status on mount
-  useEffect(() => {
-    fetchRedmineDbStatus();
-  }, []);
-
-  // Parse and render structured content
   const renderMessageContent = (content) => {
     try {
-      // Try to parse JSON data from response
-      const jsonMatch = content.match(/\{[\s\S]*?"success"\s*:\s*true[\s\S]*?\}/);
-      
-      if (jsonMatch) {
-        const data = JSON.parse(jsonMatch[0]);
-        
-        // Sprint Status Analytics
-        if (data.sprint_status) {
-          const sprint = data.sprint_status;
-          return (
-            <div className="structured-content analytics-dashboard">
-              <div className="content-header">
-                <Sparkles size={20} className="content-icon" />
-                <h3>📅 Sprint Status</h3>
-              </div>
-              <div className="analytics-grid">
-                <div className="metric-card">
-                  <div className="metric-value">{sprint.committed}</div>
-                  <div className="metric-label">Committed</div>
-                </div>
-                <div className="metric-card success">
-                  <div className="metric-value">{sprint.completed}</div>
-                  <div className="metric-label">Completed</div>
-                </div>
-                <div className="metric-card warning">
-                  <div className="metric-value">{sprint.remaining}</div>
-                  <div className="metric-label">Remaining</div>
-                </div>
-                <div className="metric-card info">
-                  <div className="metric-value">{sprint.in_progress}</div>
-                  <div className="metric-label">In Progress</div>
-                </div>
-                {sprint.blocked > 0 && (
-                  <div className="metric-card danger">
-                    <div className="metric-value">{sprint.blocked}</div>
-                    <div className="metric-label">Blocked</div>
-                  </div>
-                )}
-              </div>
-              <div className="progress-section">
-                <div className="progress-label">Sprint Completion</div>
-                <div className="progress-bar-large">
-                  <div className="progress-fill-large" style={{ width: `${sprint.completion}%` }}>
-                    {sprint.completion.toFixed(1)}%
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        }
-        
-        // Team Workload Analytics
-        if (data.team_workload) {
-          const workload = data.team_workload;
-          const maxTasks = Math.max(...Object.values(workload));
-          return (
-            <div className="structured-content analytics-dashboard">
-              <div className="content-header">
-                <Github size={20} className="content-icon" />
-                <h3>👥 Team Workload</h3>
-              </div>
-              <div className="workload-chart">
-                {Object.entries(workload).map(([member, count]) => (
-                  <div key={member} className="workload-bar-container">
-                    <div className="workload-member">{member}</div>
-                    <div className="workload-bar-wrapper">
-                      <div 
-                        className={`workload-bar ${count > 10 ? 'overloaded' : ''}`}
-                        style={{ width: `${(count / maxTasks) * 100}%` }}
-                      >
-                        <span className="workload-count">{count}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        }
-        
-        // Bug Metrics Analytics
-        if (data.bug_metrics) {
-          const bugs = data.bug_metrics;
-          return (
-            <div className="structured-content analytics-dashboard">
-              <div className="content-header">
-                <Mail size={20} className="content-icon" />
-                <h3>🐞 Bug Metrics</h3>
-              </div>
-              <div className="analytics-grid">
-                <div className="metric-card">
-                  <div className="metric-value">{bugs.total_bugs}</div>
-                  <div className="metric-label">Total Bugs</div>
-                </div>
-                <div className="metric-card warning">
-                  <div className="metric-value">{bugs.open_bugs}</div>
-                  <div className="metric-label">Open Bugs</div>
-                </div>
-                <div className="metric-card danger">
-                  <div className="metric-value">{bugs.critical_bugs}</div>
-                  <div className="metric-label">Critical</div>
-                </div>
-                <div className="metric-card info">
-                  <div className="metric-value">{bugs.bug_ratio.toFixed(2)}</div>
-                  <div className="metric-label">Bug/Story Ratio</div>
-                </div>
-                <div className="metric-card">
-                  <div className="metric-value">{bugs.avg_resolution.toFixed(1)}d</div>
-                  <div className="metric-label">Avg Resolution</div>
-                </div>
-              </div>
-            </div>
-          );
-        }
-        
-        // Velocity Trend Analytics
-        if (data.velocity_trend) {
-          const velocity = data.velocity_trend;
-          const maxVel = Math.max(...velocity.velocities.map(v => v.value));
-          return (
-            <div className="structured-content analytics-dashboard">
-              <div className="content-header">
-                <Sparkles size={20} className="content-icon" />
-                <h3>📈 Velocity Trend</h3>
-              </div>
-              <div className="velocity-chart">
-                {velocity.velocities.map((sprint, idx) => (
-                  <div key={idx} className="velocity-bar-container">
-                    <div className="velocity-bar-wrapper">
-                      <div 
-                        className="velocity-bar"
-                        style={{ height: `${(sprint.value / maxVel) * 100}%` }}
-                      >
-                        <span className="velocity-value">{sprint.value.toFixed(0)}</span>
-                      </div>
-                    </div>
-                    <div className="velocity-label">{sprint.name}</div>
-                  </div>
-                ))}
-              </div>
-              <div className="velocity-summary">
-                <div className="summary-item">
-                  <strong>Trend:</strong> 
-                  <span className={`trend-badge ${velocity.trend}`}>{velocity.trend}</span>
-                </div>
-                <div className="summary-item">
-                  <strong>Average:</strong> {velocity.average.toFixed(1)} hours
-                </div>
-              </div>
-            </div>
-          );
-        }
-        
-        // Release Status Analytics
-        if (data.release_status) {
-          const release = data.release_status;
-          return (
-            <div className="structured-content analytics-dashboard">
-              <div className="content-header">
-                <Github size={20} className="content-icon" />
-                <h3>🚀 Release Status: {release.name}</h3>
-              </div>
-              <div className="release-overview">
-                <div className="release-circle">
-                  <svg viewBox="0 0 100 100" className="progress-ring">
-                    <circle
-                      cx="50"
-                      cy="50"
-                      r="45"
-                      fill="none"
-                      stroke="rgba(255,255,255,0.1)"
-                      strokeWidth="10"
-                    />
-                    <circle
-                      cx="50"
-                      cy="50"
-                      r="45"
-                      fill="none"
-                      stroke="url(#gradient)"
-                      strokeWidth="10"
-                      strokeDasharray={`${release.progress * 2.827} 282.7`}
-                      strokeLinecap="round"
-                      transform="rotate(-90 50 50)"
-                    />
-                    <defs>
-                      <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                        <stop offset="0%" stopColor="#667eea" />
-                        <stop offset="100%" stopColor="#764ba2" />
-                      </linearGradient>
-                    </defs>
-                  </svg>
-                  <div className="progress-text">
-                    <div className="progress-percent">{release.progress.toFixed(0)}%</div>
-                    <div className="progress-subtext">Complete</div>
+      const blocks = tryParseStructured(content);
+      if (blocks.length > 0) {
+        const cards = [];
+        const textParts = [];
+
+        for (const data of blocks) {
+          // Sprint analytics (new format)
+          if (data.sprint && data.metrics) {
+            cards.push(<SprintCard key={`sprint-${cards.length}`} data={data} />);
+          }
+          // Backlog analytics (new format)
+          else if (data.backlog) {
+            cards.push(<BacklogCard key={`backlog-${cards.length}`} data={data} />);
+          }
+          // Team workload (new format)
+          else if (data.workload_by_member) {
+            cards.push(<WorkloadCard key={`workload-${cards.length}`} data={data} />);
+          }
+          // Quality / bug metrics (new format)
+          else if (data.bug_metrics) {
+            cards.push(<QualityCard key={`quality-${cards.length}`} data={data} />);
+          }
+          // Cycle time (new format)
+          else if (data.lead_time || data.cycle_time) {
+            cards.push(<CycleTimeCard key={`cycle-${cards.length}`} data={data} />);
+          }
+          // Release status (new format)
+          else if (data.releases && Array.isArray(data.releases)) {
+            cards.push(<ReleaseCard key={`release-${cards.length}`} data={data} />);
+          }
+          // Velocity trend (new format)
+          else if (data.per_sprint || data.velocity_trend) {
+            cards.push(<VelocityCard key={`velocity-${cards.length}`} data={data} />);
+          }
+          // Throughput (new format)
+          else if (data.weekly_breakdown) {
+            cards.push(<ThroughputCard key={`tp-${cards.length}`} data={data} />);
+          }
+          // Issue detail
+          else if (data.issue && data.issue.id) {
+            cards.push(<IssueDetailCard key={`detail-${cards.length}`} data={data} />);
+          }
+          // Issues list
+          else if (data.issues && Array.isArray(data.issues)) {
+            cards.push(<IssuesCard key={`issues-${cards.length}`} data={data} />);
+          }
+          // Projects list
+          else if (data.projects && Array.isArray(data.projects)) {
+            cards.push(<ProjectsCard key={`projects-${cards.length}`} data={data} />);
+          }
+          // Versions list
+          else if (data.versions && Array.isArray(data.versions)) {
+            cards.push(<VersionsCard key={`versions-${cards.length}`} data={data} />);
+          }
+          // Trackers
+          else if (data.trackers && Array.isArray(data.trackers)) {
+            cards.push(<SimpleListCard key={`trackers-${cards.length}`} title="Trackers" icon={Layers} items={data.trackers} />);
+          }
+          // Statuses
+          else if (data.statuses && Array.isArray(data.statuses)) {
+            cards.push(<SimpleListCard key={`statuses-${cards.length}`} title="Issue Statuses" icon={Circle} items={data.statuses} />);
+          }
+          // Members / Users
+          else if (data.members && Array.isArray(data.members)) {
+            cards.push(<SimpleListCard key={`members-${cards.length}`} title="Members" icon={Users} items={data.members} />);
+          }
+          else if (data.users && Array.isArray(data.users)) {
+            cards.push(<SimpleListCard key={`users-${cards.length}`} title="Users" icon={Users} items={data.users} />);
+          }
+          // Search results
+          else if (data.results && Array.isArray(data.results)) {
+            cards.push(
+              <div key={`search-${cards.length}`} className="card">
+                <div className="card-header">
+                  <div className="card-header-left">
+                    <div className="card-icon default"><Sparkles size={18} /></div>
+                    <h3 className="card-title">Search Results ({data.result_count || data.total_results})</h3>
                   </div>
                 </div>
-                <div className="release-details">
-                  <div className="detail-row">
-                    <span className="detail-label">Total Scope:</span>
-                    <span className="detail-value">{release.total} items</span>
-                  </div>
-                  <div className="detail-row">
-                    <span className="detail-label">Completed:</span>
-                    <span className="detail-value success">{release.completed} items</span>
-                  </div>
-                  <div className="detail-row">
-                    <span className="detail-label">Unresolved:</span>
-                    <span className="detail-value warning">{release.unresolved} items</span>
-                  </div>
-                  <div className="detail-row">
-                    <span className="detail-label">Due Date:</span>
-                    <span className="detail-value">{release.due_date}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        }
-        
-        // Backlog Analytics
-        if (data.backlog_metrics) {
-          const backlog = data.backlog_metrics;
-          return (
-            <div className="structured-content analytics-dashboard">
-              <div className="content-header">
-                <Sparkles size={20} className="content-icon" />
-                <h3>📊 Backlog Metrics</h3>
-              </div>
-              <div className="analytics-grid">
-                <div className="metric-card">
-                  <div className="metric-value">{backlog.total}</div>
-                  <div className="metric-label">Total Items</div>
-                </div>
-                <div className="metric-card danger">
-                  <div className="metric-value">{backlog.high_priority}</div>
-                  <div className="metric-label">High Priority</div>
-                </div>
-                <div className="metric-card warning">
-                  <div className="metric-value">{backlog.unestimated}</div>
-                  <div className="metric-label">Unestimated</div>
-                </div>
-                <div className="metric-card info">
-                  <div className="metric-value">{backlog.avg_age_days}d</div>
-                  <div className="metric-label">Avg Age</div>
-                </div>
-              </div>
-              
-              <div className="charts-row">
-                <div className="chart-container">
-                  <div className="chart-title">Priority Distribution</div>
-                  <div className="donut-chart">
-                    <svg viewBox="0 0 100 100" className="donut-svg">
-                      <circle
-                        cx="50"
-                        cy="50"
-                        r="40"
-                        fill="none"
-                        stroke="rgba(239, 68, 68, 0.3)"
-                        strokeWidth="20"
-                        strokeDasharray={`${backlog.high_priority_percent * 2.513} 251.3`}
-                        transform="rotate(-90 50 50)"
-                      />
-                      <circle
-                        cx="50"
-                        cy="50"
-                        r="40"
-                        fill="none"
-                        stroke="rgba(59, 130, 246, 0.3)"
-                        strokeWidth="20"
-                        strokeDasharray={`${(100 - backlog.high_priority_percent) * 2.513} 251.3`}
-                        strokeDashoffset={`-${backlog.high_priority_percent * 2.513}`}
-                        transform="rotate(-90 50 50)"
-                      />
-                    </svg>
-                    <div className="donut-center">
-                      <div className="donut-percent">{backlog.high_priority_percent.toFixed(0)}%</div>
-                      <div className="donut-label">High Priority</div>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="chart-container">
-                  <div className="chart-title">Estimation Status</div>
-                  <div className="donut-chart">
-                    <svg viewBox="0 0 100 100" className="donut-svg">
-                      <circle
-                        cx="50"
-                        cy="50"
-                        r="40"
-                        fill="none"
-                        stroke="rgba(251, 191, 36, 0.3)"
-                        strokeWidth="20"
-                        strokeDasharray={`${backlog.unestimated_percent * 2.513} 251.3`}
-                        transform="rotate(-90 50 50)"
-                      />
-                      <circle
-                        cx="50"
-                        cy="50"
-                        r="40"
-                        fill="none"
-                        stroke="rgba(34, 197, 94, 0.3)"
-                        strokeWidth="20"
-                        strokeDasharray={`${(100 - backlog.unestimated_percent) * 2.513} 251.3`}
-                        strokeDashoffset={`-${backlog.unestimated_percent * 2.513}`}
-                        transform="rotate(-90 50 50)"
-                      />
-                    </svg>
-                    <div className="donut-center">
-                      <div className="donut-percent">{backlog.unestimated_percent.toFixed(0)}%</div>
-                      <div className="donut-label">Unestimated</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="monthly-trend">
-                <div className="trend-item added">
-                  <div className="trend-icon">📥</div>
-                  <div className="trend-content">
-                    <div className="trend-value">{backlog.added_this_month}</div>
-                    <div className="trend-label">Added This Month</div>
-                  </div>
-                </div>
-                <div className="trend-item closed">
-                  <div className="trend-icon">✅</div>
-                  <div className="trend-content">
-                    <div className="trend-value">{backlog.closed_this_month}</div>
-                    <div className="trend-label">Closed This Month</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        }
-        
-        // Cycle Time Metrics
-        if (data.cycle_metrics) {
-          const cycle = data.cycle_metrics;
-          const maxTime = Math.max(cycle.avg_lead_time_days, cycle.avg_cycle_time_days);
-          return (
-            <div className="structured-content analytics-dashboard">
-              <div className="content-header">
-                <Github size={20} className="content-icon" />
-                <h3>⏱️ Cycle Time Metrics</h3>
-              </div>
-              <div className="time-comparison">
-                <div className="time-bar-container">
-                  <div className="time-label">Lead Time</div>
-                  <div className="time-bar-wrapper">
-                    <div 
-                      className="time-bar lead-time"
-                      style={{ width: `${(cycle.avg_lead_time_days / maxTime) * 100}%` }}
-                    >
-                      <span className="time-value">{cycle.avg_lead_time_days} days</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="time-bar-container">
-                  <div className="time-label">Cycle Time</div>
-                  <div className="time-bar-wrapper">
-                    <div 
-                      className="time-bar cycle-time"
-                      style={{ width: `${(cycle.avg_cycle_time_days / maxTime) * 100}%` }}
-                    >
-                      <span className="time-value">{cycle.avg_cycle_time_days} days</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              {cycle.reopened_tickets > 0 && (
-                <div className="reopened-alert">
-                  <span className="alert-icon">⚠️</span>
-                  <span className="alert-text">{cycle.reopened_tickets} tickets were reopened</span>
-                </div>
-              )}
-            </div>
-          );
-        }
-        
-        // Throughput Analysis
-        if (data.throughput) {
-          const throughput = data.throughput;
-          return (
-            <div className="structured-content analytics-dashboard">
-              <div className="content-header">
-                <Sparkles size={20} className="content-icon" />
-                <h3>📊 Throughput Analysis</h3>
-              </div>
-              <div className="throughput-comparison">
-                <div className="throughput-bar created">
-                  <div className="throughput-label">Created</div>
-                  <div className="throughput-value">{throughput.created}</div>
-                  <div className="throughput-visual" style={{ width: `${(throughput.created / Math.max(throughput.created, throughput.closed)) * 100}%` }}></div>
-                </div>
-                <div className="throughput-bar closed">
-                  <div className="throughput-label">Closed</div>
-                  <div className="throughput-value">{throughput.closed}</div>
-                  <div className="throughput-visual" style={{ width: `${(throughput.closed / Math.max(throughput.created, throughput.closed)) * 100}%` }}></div>
-                </div>
-              </div>
-              <div className="throughput-summary">
-                <div className={`net-badge ${throughput.net >= 0 ? 'positive' : 'negative'}`}>
-                  {throughput.net >= 0 ? '✅' : '⚠️'} Net: {throughput.net > 0 ? '+' : ''}{throughput.net} tickets
-                </div>
-                <div className="throughput-status">
-                  {throughput.net >= 0 ? 'Closing more than creating' : 'Creating more than closing'}
-                </div>
-              </div>
-            </div>
-          );
-        }
-        
-        // Redmine Issues List
-        if (data.issues && Array.isArray(data.issues)) {
-          return (
-            <div className="structured-content">
-              <div className="content-header">
-                <Mail size={20} className="content-icon" />
-                <h3>Redmine Issues ({data.count})</h3>
-              </div>
-              <div className="issues-list">
-                {data.issues.slice(0, 10).map((issue) => (
-                  <div key={issue.id} className="issue-card">
-                    <div className="issue-header">
-                      <span className="issue-id">#{issue.id}</span>
-                      <span className={`issue-status status-${issue.status?.toLowerCase().replace(' ', '-')}`}>
-                        {issue.status}
-                      </span>
-                      <span className={`issue-priority priority-${issue.priority?.toLowerCase()}`}>
-                        {issue.priority}
-                      </span>
-                    </div>
-                    <div className="issue-title">{issue.subject}</div>
-                    <div className="issue-meta">
-                      <span>📁 {issue.project}</span>
-                      {issue.assigned_to && <span>👤 {issue.assigned_to}</span>}
-                      <span>📅 {new Date(issue.updated_on).toLocaleDateString()}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        }
-        
-        // Redmine Projects List
-        if (data.projects && Array.isArray(data.projects)) {
-          return (
-            <div className="structured-content">
-              <div className="content-header">
-                <Github size={20} className="content-icon" />
-                <h3>Redmine Projects ({data.count})</h3>
-              </div>
-              <div className="projects-grid">
-                {data.projects.map((project) => (
-                  <div key={project.id} className="project-card">
-                    <div className="project-name">{project.name}</div>
-                    <div className="project-id">ID: {project.identifier}</div>
-                    {project.description && (
-                      <div className="project-desc">{project.description.substring(0, 100)}...</div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        }
-        
-        // Single Redmine Issue
-        if (data.issue && data.issue.id) {
-          const issue = data.issue;
-          return (
-            <div className="structured-content">
-              <div className="content-header">
-                <Mail size={20} className="content-icon" />
-                <h3>Issue #{issue.id}</h3>
-              </div>
-              <div className="issue-detail">
-                <div className="issue-detail-header">
-                  <h2>{issue.subject}</h2>
-                  <div className="issue-badges">
-                    <span className={`badge status-${issue.status?.toLowerCase().replace(' ', '-')}`}>
-                      {issue.status}
-                    </span>
-                    <span className={`badge priority-${issue.priority?.toLowerCase()}`}>
-                      {issue.priority}
-                    </span>
-                  </div>
-                </div>
-                <div className="issue-detail-body">
-                  <p>{issue.description}</p>
-                </div>
-                <div className="issue-detail-meta">
-                  <div className="meta-item">
-                    <strong>Project:</strong> {issue.project}
-                  </div>
-                  <div className="meta-item">
-                    <strong>Tracker:</strong> {issue.tracker}
-                  </div>
-                  {issue.assigned_to && (
-                    <div className="meta-item">
-                      <strong>Assigned to:</strong> {issue.assigned_to}
-                    </div>
-                  )}
-                  <div className="meta-item">
-                    <strong>Author:</strong> {issue.author}
-                  </div>
-                  <div className="meta-item">
-                    <strong>Created:</strong> {new Date(issue.created_on).toLocaleString()}
-                  </div>
-                  <div className="meta-item">
-                    <strong>Updated:</strong> {new Date(issue.updated_on).toLocaleString()}
-                  </div>
-                  {issue.done_ratio !== undefined && (
-                    <div className="meta-item">
-                      <strong>Progress:</strong>
-                      <div className="progress-bar">
-                        <div className="progress-fill" style={{ width: `${issue.done_ratio}%` }}>
-                          {issue.done_ratio}%
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
-        }
-        
-        // Search Results (DuckDuckGo, Google)
-        if (data.results && Array.isArray(data.results)) {
-          return (
-            <div className="structured-content">
-              <div className="content-header">
-                <Sparkles size={20} className="content-icon" />
-                <h3>Search Results ({data.result_count || data.total_results})</h3>
-              </div>
-              <div className="search-results">
-                {data.results.slice(0, 8).map((result, idx) => (
-                  <div key={idx} className="search-result-card">
-                    <a href={result.link || result.url} target="_blank" rel="noopener noreferrer" className="result-title">
-                      {result.title}
+                <div className="search-results">
+                  {data.results.slice(0, 8).map((result, idx) => (
+                    <a key={idx} href={result.link || result.url} target="_blank" rel="noopener noreferrer" className="search-item">
+                      <span className="search-title">{result.title}</span>
+                      {result.snippet && <span className="search-snippet">{result.snippet}</span>}
                     </a>
-                    <div className="result-url">{result.domain || new URL(result.link || result.url).hostname}</div>
-                    {result.snippet && <div className="result-snippet">{result.snippet}</div>}
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
+            );
+          }
+          // Success message (issue created/updated/deleted)
+          else if (data.message) {
+            cards.push(
+              <div key={`msg-${cards.length}`} className="card success-card">
+                <CheckCircle2 size={20} />
+                <span>{data.message}</span>
+              </div>
+            );
+          }
+        }
+
+        // Strip JSON from text content
+        let textContent = content;
+        for (const block of blocks) {
+          const jsonStr = JSON.stringify(block);
+          // Remove the JSON from the text (approximate)
+          // This is a best-effort approach
+        }
+
+        // Get surrounding text (remove JSON blocks from content)
+        let cleanText = content;
+        // Simple heuristic: remove everything between { and matching }
+        let cleaned = '';
+        let depth = 0;
+        let inJson = false;
+        for (let i = 0; i < content.length; i++) {
+          if (content[i] === '{') {
+            depth++;
+            inJson = true;
+          } else if (content[i] === '}') {
+            depth--;
+            if (depth === 0) { inJson = false; continue; }
+          }
+          if (!inJson && depth === 0) cleaned += content[i];
+        }
+        cleanText = cleaned.trim();
+
+        if (cards.length > 0) {
+          return (
+            <div className="structured-response">
+              {cleanText && <div className="response-text">{cleanText}</div>}
+              <div className="cards-stack">{cards}</div>
             </div>
           );
         }
       }
     } catch (e) {
-      // If parsing fails, fall back to plain text
-      console.log('Could not parse structured content:', e);
+      // fall through to plain text
     }
-    
-    // Default: render as plain text
-    return <div className="plain-text">{content}</div>;
+    return <div className="response-text">{content}</div>;
   };
 
+  /* ---- Send message ---- */
   const sendMessage = async (e) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
-
     const userMessage = input.trim();
     setInput('');
     setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
@@ -763,271 +781,90 @@ function App() {
     try {
       const response = await fetch('http://localhost:3001/api/chat', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          message: userMessage,
-          conversationHistory,
-          enabledTools,
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: userMessage, conversationHistory, enabledTools }),
       });
-
-      if (!response.ok) {
-        throw new Error('Failed to get response');
-      }
-
+      if (!response.ok) throw new Error('Failed to get response');
       const data = await response.json();
-      
-      console.log('=== RESPONSE DATA ===');
-      console.log('Full response:', data.response);
-      console.log('====================');
-      
-      // Check if response contains music playback action
-      let musicPlayed = false;
+
+      // Check for music
       try {
-        // Method 1: Try to find complete JSON with PLAY_MUSIC action (including nested objects)
-        const jsonPattern = /\{[\s\S]*?"action"\s*:\s*"PLAY_MUSIC"[\s\S]*?"track"\s*:\s*\{[\s\S]*?\}[\s\S]*?\}/;
-        const jsonMatch = data.response.match(jsonPattern);
-        console.log('JSON match found:', jsonMatch);
-        
-        if (jsonMatch) {
-          try {
-            const musicData = JSON.parse(jsonMatch[0]);
-            console.log('Parsed music data:', musicData);
-            if (musicData.track && musicData.track.previewUrl) {
-              console.log('Playing track:', musicData.track);
-              playTrack(musicData.track);
-              musicPlayed = true;
-            }
-          } catch (e) {
-            console.log('Failed to parse music data:', e);
-          }
+        const previewMatch = data.response.match(/"previewUrl"\s*:\s*"([^"]+)"/);
+        const nameMatch = data.response.match(/"name"\s*:\s*"([^"]+)"/);
+        const artistMatch = data.response.match(/"artist"\s*:\s*"([^"]+)"/);
+        const artworkMatch = data.response.match(/"artworkUrl"\s*:\s*"([^"]+)"/);
+        if (previewMatch) {
+          playTrack({
+            previewUrl: previewMatch[1],
+            name: nameMatch ? nameMatch[1] : 'Unknown Track',
+            artist: artistMatch ? artistMatch[1] : 'Unknown Artist',
+            artworkUrl: artworkMatch ? artworkMatch[1] : '',
+          });
         }
-        
-        // Method 2: Extract individual fields if JSON parsing fails
-        if (!musicPlayed) {
-          console.log('Trying field extraction method...');
-          const previewMatch = data.response.match(/"previewUrl"\s*:\s*"([^"]+)"/);
-          const nameMatch = data.response.match(/"name"\s*:\s*"([^"]+)"/);
-          const artistMatch = data.response.match(/"artist"\s*:\s*"([^"]+)"/);
-          const artworkMatch = data.response.match(/"artworkUrl"\s*:\s*"([^"]+)"/);
-          
-          console.log('Field matches:', { previewMatch, nameMatch, artistMatch, artworkMatch });
-          
-          if (previewMatch) {
-            const track = {
-              previewUrl: previewMatch[1],
-              name: nameMatch ? nameMatch[1] : 'Unknown Track',
-              artist: artistMatch ? artistMatch[1] : 'Unknown Artist',
-              artworkUrl: artworkMatch ? artworkMatch[1] : 'https://via.placeholder.com/100',
-            };
-            console.log('Playing track (extracted):', track);
-            playTrack(track);
-            musicPlayed = true;
-          }
-        }
-        
-        if (!musicPlayed) {
-          console.log('No music data found in response');
-        }
-      } catch (e) {
-        console.error('Error processing music data:', e);
-      }
+      } catch {}
 
       setMessages(prev => [...prev, { role: 'assistant', content: data.response }]);
       setConversationHistory(data.conversationHistory);
     } catch (error) {
-      console.error('Error:', error);
-      setMessages(prev => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: 'Sorry, I encountered an error. Please try again.',
-        },
-      ]);
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, I encountered an error. Please try again.' }]);
     } finally {
       setIsLoading(false);
     }
   };
 
   const examplePrompts = [
-    { icon: Mail, text: 'List my recent emails', color: '#ff6b6b' },
-    { icon: Music, text: 'Play some jazz', color: '#1db954' },
-    { icon: Github, text: 'Show my GitHub repos', color: '#6e5494' },
+    { icon: FolderKanban, text: 'List all Redmine projects', color: '#3b82f6' },
+    { icon: BarChart3, text: 'Show sprint analytics for ncel', color: '#8b5cf6' },
+    { icon: Bug, text: 'How many bugs are open?', color: '#ef4444' },
+    { icon: Users, text: 'Show team workload', color: '#10b981' },
   ];
 
   const toolCategories = [
-    { 
-      id: 'music', 
-      name: 'Music Tools', 
-      description: 'Play music, search songs, get artist info',
-      icon: Music,
-      color: '#1db954'
-    },
-    { 
-      id: 'playwright', 
-      name: 'Web Automation', 
-      description: 'Browse websites, search, scrape products',
-      icon: Github,
-      color: '#6e5494'
-    },
-    { 
-      id: 'redmine', 
-      name: 'Redmine', 
-      description: 'Manage projects, issues, and tasks',
-      icon: Mail,
-      color: '#ff6b6b'
-    },
+    { id: 'music', name: 'Music Tools', description: 'Play music, search songs, get artist info', icon: Music, color: '#22c55e' },
+    { id: 'playwright', name: 'Web Automation', description: 'Browse websites, search, scrape products', icon: Github, color: '#8b5cf6' },
+    { id: 'redmine', name: 'Redmine', description: 'Projects, issues, sprints, analytics, quality', icon: FolderKanban, color: '#3b82f6' },
   ];
 
   const toggleTool = (toolId) => {
-    // Prevent disabling Redmine if DB cache is enabled
-    if (toolId === 'redmine' && enabledTools[toolId] && redmineDbEnabled) {
-      const confirmDisable = window.confirm(
-        'Redmine DB cache is currently enabled. Disabling Redmine tools will prevent analytics from working.\n\nDo you want to disable both Redmine tools and Redmine DB cache?'
-      );
-      
-      if (confirmDisable) {
-        // Disable both
-        toggleRedmineDb(false);
-        setEnabledTools(prev => ({
-          ...prev,
-          [toolId]: false
-        }));
-      }
-      return;
-    }
-    
-    setEnabledTools(prev => ({
-      ...prev,
-      [toolId]: !prev[toolId]
-    }));
-  };
-
-  // Test music player
-  const testMusicPlayer = () => {
-    const testTrack = {
-      name: 'Test Song',
-      artist: 'Test Artist',
-      previewUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview125/v4/3d/07/37/3d073731-8b8e-3c54-4c5f-8e6f5f4e5e5e/mzaf_1234567890.plus.aac.p.m4a',
-      artworkUrl: 'https://via.placeholder.com/100',
-    };
-    console.log('Testing music player with:', testTrack);
-    playTrack(testTrack);
+    setEnabledTools(prev => ({ ...prev, [toolId]: !prev[toolId] }));
   };
 
   return (
     <div className="app">
+      {/* Music Player */}
       {currentTrack && (
         <div className="music-player">
-          <img src={currentTrack.artworkUrl} alt={currentTrack.name} className="album-art" />
+          {currentTrack.artworkUrl && <img src={currentTrack.artworkUrl} alt={currentTrack.name} crossOrigin="anonymous" className="album-art" />}
           <div className="track-info">
             <div className="track-name">{currentTrack.name}</div>
             <div className="track-artist">{currentTrack.artist}</div>
           </div>
-          <button onClick={togglePlayPause} className="play-btn">
-            {isPlaying ? <Pause size={20} /> : <Play size={20} />}
-          </button>
+          <button onClick={togglePlayPause} className="play-btn">{isPlaying ? <Pause size={18} /> : <Play size={18} />}</button>
         </div>
       )}
 
+      {/* Tools Panel Modal */}
       {showToolsPanel && (
-        <div className="tools-panel-overlay" onClick={() => setShowToolsPanel(false)}>
+        <div className="tools-overlay" onClick={() => setShowToolsPanel(false)}>
           <div className="tools-panel" onClick={(e) => e.stopPropagation()}>
             <div className="tools-panel-header">
               <h2>Tool Settings</h2>
-              <button className="close-btn" onClick={() => setShowToolsPanel(false)}>
-                <X size={20} />
-              </button>
+              <button className="icon-btn" onClick={() => setShowToolsPanel(false)}><X size={18} /></button>
             </div>
-            <div className="tools-panel-content">
-              <p className="tools-description">
-                Enable or disable tool categories. Disabled tools won't be available to the AI.
-              </p>
-              
-              {/* Redmine DB Cache Toggle */}
-              <div className="tool-category redmine-db-section">
-                <div className="tool-category-info">
-                  <div className="tool-category-icon" style={{ backgroundColor: '#e74c3c' }}>
-                    <span style={{ fontSize: '20px' }}>🗄️</span>
-                  </div>
-                  <div className="tool-category-text">
-                    <h3>Redmine DB Cache</h3>
-                    <p>Enable fast analytics with in-memory cache (loads 1000 issues)</p>
-                    {redmineDbEnabled && (
-                      <small style={{ color: '#3498db', display: 'block', marginTop: '4px' }}>
-                        ℹ️ Redmine tools are auto-enabled when cache is on
-                      </small>
-                    )}
-                    {redmineDbStatus && redmineDbStatus.initialized && (
-                      <div className="cache-status">
-                        <small>
-                          📊 {redmineDbStatus.counts?.issues || 0} issues cached
-                          {redmineDbStatus.age_seconds && (
-                            <> • Updated {Math.floor(redmineDbStatus.age_seconds / 60)}m ago</>
-                          )}
-                        </small>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <label className="toggle-switch">
-                  <input
-                    type="checkbox"
-                    checked={redmineDbEnabled}
-                    onChange={(e) => toggleRedmineDb(e.target.checked)}
-                    disabled={redmineDbLoading}
-                  />
-                  <span className="toggle-slider"></span>
-                </label>
-              </div>
-              
-              {/* Loading Progress */}
-              {redmineDbLoading && (
-                <div className="cache-loading">
-                  <div className="loading-header">
-                    <Loader2 className="spin" size={16} />
-                    <span>Loading Redmine cache...</span>
-                  </div>
-                  <div className="progress-bar-cache">
-                    <div 
-                      className="progress-fill-cache" 
-                      style={{ width: `${cacheLoadProgress}%` }}
-                    ></div>
-                  </div>
-                  <small>{cacheLoadProgress}% complete</small>
-                </div>
-              )}
-              
-              <div className="tools-divider"></div>
-              
-              {toolCategories.map((category) => (
-                <div key={category.id} className="tool-category">
-                  <div className="tool-category-info">
-                    <div className="tool-category-icon" style={{ backgroundColor: category.color }}>
-                      <category.icon size={20} />
-                    </div>
-                    <div className="tool-category-text">
-                      <h3>
-                        {category.name}
-                        {category.id === 'redmine' && redmineDbEnabled && (
-                          <span style={{ fontSize: '0.7rem', color: '#3498db', marginLeft: '8px' }}>
-                            (auto-enabled)
-                          </span>
-                        )}
-                      </h3>
-                      <p>{category.description}</p>
+            <div className="tools-panel-body">
+              <p className="tools-desc">Enable or disable tool categories. Disabled tools will not be available to the AI.</p>
+              {toolCategories.map((cat) => (
+                <div key={cat.id} className="tool-row">
+                  <div className="tool-row-info">
+                    <div className="tool-icon" style={{ background: cat.color + '22', color: cat.color }}><cat.icon size={18} /></div>
+                    <div>
+                      <span className="tool-name">{cat.name}</span>
+                      <span className="tool-desc">{cat.description}</span>
                     </div>
                   </div>
-                  <label className="toggle-switch">
-                    <input
-                      type="checkbox"
-                      checked={enabledTools[category.id]}
-                      onChange={() => toggleTool(category.id)}
-                      disabled={category.id === 'redmine' && redmineDbEnabled}
-                    />
-                    <span className="toggle-slider"></span>
+                  <label className="toggle">
+                    <input type="checkbox" checked={enabledTools[cat.id]} onChange={() => toggleTool(cat.id)} />
+                    <span className="toggle-track" />
                   </label>
                 </div>
               ))}
@@ -1035,62 +872,55 @@ function App() {
           </div>
         </div>
       )}
-      
+
+      {/* Main Container */}
       <div className="container">
         <header className="header">
-          <div className="header-content">
-            <Sparkles className="header-icon" />
-            <h1>MCP Integration Platform</h1>
-            <p>AI-powered assistant with Gmail, Spotify & GitHub</p>
+          <div className="header-left">
+            <Sparkles className="header-icon" size={28} />
+            <div>
+              <h1 className="header-title">MCP Platform</h1>
+              <p className="header-subtitle">Redmine AI Assistant</p>
+            </div>
           </div>
-          <button className="settings-btn" onClick={() => setShowToolsPanel(true)}>
-            <Settings size={20} />
+          <button className="icon-btn settings" onClick={() => setShowToolsPanel(true)} aria-label="Settings">
+            <Settings size={18} />
           </button>
         </header>
 
         <div className="chat-container">
           {messages.length === 0 ? (
             <div className="welcome">
-              <div className="welcome-icon">
-                <Sparkles size={48} />
-              </div>
-              <h2>Welcome! How can I help you today?</h2>
-              <p>Try one of these examples:</p>
+              <div className="welcome-orb"><Sparkles size={32} /></div>
+              <h2 className="welcome-title">How can I help you today?</h2>
+              <p className="welcome-sub">Ask about projects, issues, sprints, team workload, or quality metrics.</p>
               <div className="examples">
-                {examplePrompts.map((prompt, index) => (
-                  <button
-                    key={index}
-                    className="example-btn"
-                    onClick={() => setInput(prompt.text)}
-                    style={{ '--accent-color': prompt.color }}
-                  >
-                    <prompt.icon size={20} />
-                    <span>{prompt.text}</span>
+                {examplePrompts.map((p, i) => (
+                  <button key={i} className="example-btn" onClick={() => setInput(p.text)}>
+                    <p.icon size={16} style={{ color: p.color, flexShrink: 0 }} />
+                    <span>{p.text}</span>
+                    <ChevronRight size={14} className="example-arrow" />
                   </button>
                 ))}
-                <button
-                  className="example-btn test-btn"
-                  onClick={testMusicPlayer}
-                  style={{ '--accent-color': '#ff9800' }}
-                >
-                  <Play size={20} />
-                  <span>Test Music Player</span>
-                </button>
               </div>
             </div>
           ) : (
             <div className="messages">
-              {messages.map((message, index) => (
-                <div key={index} className={`message ${message.role}`}>
-                  <div className="message-content">
-                    {message.role === 'assistant' ? renderMessageContent(message.content) : message.content}
+              {messages.map((msg, i) => (
+                <div key={i} className={`message ${msg.role}`}>
+                  {msg.role === 'assistant' && (
+                    <div className="avatar assistant-avatar"><Sparkles size={14} /></div>
+                  )}
+                  <div className={`message-bubble ${msg.role}`}>
+                    {msg.role === 'assistant' ? renderMessageContent(msg.content) : msg.content}
                   </div>
                 </div>
               ))}
               {isLoading && (
                 <div className="message assistant">
-                  <div className="message-content loading">
-                    <Loader2 className="spinner" />
+                  <div className="avatar assistant-avatar"><Sparkles size={14} /></div>
+                  <div className="message-bubble assistant loading-bubble">
+                    <Loader2 className="spinner" size={16} />
                     <span>Thinking...</span>
                   </div>
                 </div>
@@ -1100,25 +930,17 @@ function App() {
           )}
         </div>
 
-        <form className="input-form" onSubmit={sendMessage}>
+        <form className="input-bar" onSubmit={sendMessage}>
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask me anything..."
+            placeholder="Ask about projects, sprints, bugs, workload..."
             disabled={isLoading}
             className="input-field"
           />
-          <button
-            type="submit"
-            disabled={isLoading || !input.trim()}
-            className="send-btn"
-          >
-            {isLoading ? (
-              <Loader2 className="spinner" size={20} />
-            ) : (
-              <Send size={20} />
-            )}
+          <button type="submit" disabled={isLoading || !input.trim()} className="send-btn" aria-label="Send message">
+            {isLoading ? <Loader2 className="spinner" size={18} /> : <Send size={18} />}
           </button>
         </form>
       </div>
